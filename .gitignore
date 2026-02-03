@@ -1,0 +1,13 @@
+__pycache__
+.venv
+.env
+*.pyc
+token.json
+token.pickle
+credentials.json
+env.yaml
+deploy_env.yaml
+*.log
+.DS_Store
+.idea/
+.vscode/

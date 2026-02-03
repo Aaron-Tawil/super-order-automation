@@ -1,0 +1,27 @@
+# Files to ignore during gcloud functions deploy
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+.env
+
+# Dev/test files
+test_serverless.py
+run_mvp.py
+*.log
+
+# Example files (not needed in production)
+example/
+
+# Local artifacts
+.sessions.json
+mvp_output.xlsx
+temp_output.xlsx
+
+# Dashboard (deployed separately)
+# src/dashboard/
+
+# Documentation
+*.md
+!README.md

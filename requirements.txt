@@ -1,0 +1,28 @@
+# Core Dependencies
+google-genai>=1.0.0
+pydantic>=2.0.0
+python-dotenv
+
+# Gmail Integration
+google-auth-oauthlib
+google-api-python-client
+
+# Web UI
+streamlit
+pandas
+openpyxl
+requests
+fastapi
+uvicorn
+
+# String Matching
+rapidfuzz>=3.0.0  # Fuzzy string matching for supplier names
+
+# GCP Services (optional - for production)
+google-cloud-storage
+google-cloud-firestore
+google-cloud-logging
+google-cloud-pubsub
+
+# Cloud Functions (for deployment)
+functions-framework
