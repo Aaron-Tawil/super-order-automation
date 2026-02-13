@@ -18,13 +18,15 @@ Usage:
 import os
 import sys
 import argparse
+import time
+import logging
 import subprocess
 import base64
 from pathlib import Path
 
 # Configuration
-PROJECT_ID = "super-home-automation"
-REGION = "us-central1"
+PROJECT_ID = os.getenv("GCP_PROJECT_ID", "super-home-automation") # Default for dev, override in CI/CD
+REGION = os.getenv("GCP_REGION", "us-central1")
 FUNCTION_NAME = "order-bot"
 PUBSUB_TOPIC = "gmail-incoming-orders"
 SECRET_NAME = "super-order-gmail-token"

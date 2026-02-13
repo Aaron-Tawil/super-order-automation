@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Deploy Web UI to Cloud Run
 """
@@ -7,8 +8,8 @@ import subprocess
 import argparse
 
 # Configuration
-PROJECT_ID = "super-home-automation"
-REGION = "us-central1"
+PROJECT_ID = os.getenv("GCP_PROJECT_ID", "super-home-automation")
+REGION = os.getenv("GCP_REGION", "us-central1")
 SERVICE_NAME = "order-dashboard"
 IMAGE_NAME = f"gcr.io/{PROJECT_ID}/{SERVICE_NAME}"
 

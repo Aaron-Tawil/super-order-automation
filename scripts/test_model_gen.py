@@ -9,7 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 
 def test_generation():
     """Tests generation with gemini-3-pro-preview using default credentials."""
-    project_id = "super-home-automation"
+    project_id = os.getenv("GCP_PROJECT_ID", "super-home-automation")
     location = "global"
     model_name = "gemini-2.5-flash"
     

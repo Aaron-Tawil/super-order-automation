@@ -22,10 +22,8 @@ from src.shared.models import ExtractedOrder, MultiOrderResponse
 from src.shared.constants import VAT_RATE, VALIDATION_TOLERANCE, MAX_RETRIES
 
 # Emails to exclude from supplier detection context
-EXCLUDED_EMAILS = [
-    "store4@superhome.co.il",
-    "moishiop@gmail.com"
-]
+# Emails to exclude from supplier detection context
+EXCLUDED_EMAILS = os.getenv("EXCLUDED_EMAILS", "").split(",") if os.getenv("EXCLUDED_EMAILS") else []
 
 # Path to supplier database
 SUPPLIERS_EXCEL_PATH = os.path.join(

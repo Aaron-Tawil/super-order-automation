@@ -15,13 +15,23 @@ run_mvp.py
 example/
 
 # Local artifacts
-.sessions.json
-mvp_output.xlsx
-temp_output.xlsx
 
-# Dashboard (deployed separately)
-# src/dashboard/
+# Test & Data Directories
+tests/
+tests-data/
+data-excel/
+
+# Agent & Bot Artifacts
+.agent/
+.sessions.json
 
 # Documentation
+docs/
 *.md
 !README.md
+
+# Deployment & Utility Scripts (Not needed in runtime)
+scripts/
+deploy.py
+deploy_ui.py
+cloudbuild.yaml

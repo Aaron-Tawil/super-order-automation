@@ -31,7 +31,7 @@ def test_multi_order_extraction():
     # Initialize client
     init_client(api_key=API_KEY, project_id=PROJECT_ID)
     
-    pdf_path = r"c:\Dev\super-order-automation\tests-data\itel-multi-orders-in one-doc.pdf"
+    pdf_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../tests-data/itel-multi-orders-in one-doc.pdf'))
     
     if not os.path.exists(pdf_path):
         print(f"Error: PDF not found at {pdf_path}")
