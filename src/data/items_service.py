@@ -281,7 +281,10 @@ class ItemsService:
         results = []
         
         refs = [self._collection.document(b) for b in list(lookup_ids)]
+        import time
+        t_start = time.time()
         docs = self._db.get_all(refs)
+        logger.info(f"get_items_batch: Firestore get_all({len(refs)} refs) took {time.time() - t_start:.2f}s")
         
         for doc in docs:
             if doc.exists:

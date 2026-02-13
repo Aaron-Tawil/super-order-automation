@@ -23,8 +23,11 @@ from src.shared.session_store import create_session
 from src.shared.translations import get_text
 
 # Load env vars
+# Load env vars
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
+# Auto-detect GCP Project (Cloud Run sets GOOGLE_CLOUD_PROJECT automatically)
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT_ID")
 WEB_UI_URL = os.getenv("WEB_UI_URL", "http://localhost:8501")
 
 
@@ -171,8 +174,8 @@ def process_single_attachment(service, thread_id, msg_id_header, sender, subject
         except Exception as gcs_err:
             logging.warning(f"Failed to upload to GCS (early attempt): {gcs_err}")
 
-        # Initialize AI Client
-        init_client(api_key=API_KEY)
+        # Initialize AI Client (Prioritize Vertex AI)
+        init_client(api_key=API_KEY, project_id=PROJECT_ID)
         
         # === PHASE 1: SUPPLIER DETECTION ===
         logging.info("Phase 1: Detecting supplier from email + invoice context...")
@@ -201,193 +204,136 @@ def process_single_attachment(service, thread_id, msg_id_header, sender, subject
         
         # === PHASE 2: PRODUCT EXTRACTION ===
         logging.info("Phase 2: Extracting products from invoice...")
-        order = process_invoice(
+        orders = process_invoice(
             temp_path, 
             mime_type=attachment_mime_type, 
             email_context=email_body_text,
             supplier_instructions=supplier_instructions
         )
         
-        if order:
-            logging.info("Extraction Successful!")
-
-            # === SUPPLIER MATCHING (Fallback if Phase 1 was uncertain) ===
-            # If Phase 1 detected UNKNOWN or low confidence, try matching from extracted data
-            if detected_supplier_code == "UNKNOWN" or detection_confidence < 0.7:
-                logging.info("Phase 1 uncertain, attempting fallback matching from extracted data...")
-                fallback_code = supplier_service.match_supplier(
-                    global_id=order.supplier_global_id,
-                    email=order.supplier_email,
-                    phone=order.supplier_phone
-                )
-                if fallback_code != "UNKNOWN":
-                    detected_supplier_code = fallback_code
-                    logging.info(f"Fallback matching succeeded: {detected_supplier_code}")
+        if orders:
+            logging.info(f"Extraction Successful! Found {len(orders)} orders.")
             
-            supplier_code = detected_supplier_code
-            supplier_unknown = supplier_service.is_unknown(supplier_code)
-            
-            # Get supplier name from supplier_service
-            supplier_data = supplier_service.get_supplier(supplier_code) if not supplier_unknown else None
-            supplier_name = supplier_data.get('name', 'Unknown Supplier') if supplier_data else 'Unknown Supplier'
-            
-            if supplier_unknown:
-                logging.warning(f"Could not match supplier for order (code: {supplier_code})")
-            else:
-                logging.info(f"Final supplier: {supplier_name} -> {supplier_code}")
-
-            # Populate supplier details in order object for dashboard
-            order.supplier_name = supplier_name
-            order.supplier_code = supplier_code
-
-            # === NEW ITEMS DETECTION ===
-            new_items_count = 0
-            invalid_barcode_count = 0
-            
-            try:
-                # Initialize services
-                items_service = ItemsService()
-                
-                # Get all barcodes from order
-                all_barcodes = [
-                    str(item.barcode).strip() 
-                    for item in order.line_items 
-                    if item.barcode
-                ]
-                
-                # Filter for valid barcodes (>= 11 digits)
-                valid_barcodes = [b for b in all_barcodes if len(b) >= 11]
-                invalid_barcode_count = len(all_barcodes) - len(valid_barcodes)
-                
-                if invalid_barcode_count > 0:
-                    logging.info(f"Filtered out {invalid_barcode_count} invalid barcodes (<11 digits).")
-                
-                # Check which VALID barcodes are new
-                new_barcodes = items_service.get_new_barcodes(valid_barcodes)
-                logging.info(f"Found {len(new_barcodes)} new barcodes out of {len(valid_barcodes)} valid ones")
-                
-                if new_barcodes:
-                    # Filter to get new items line data
-                    new_items = filter_new_items_from_order(order, new_barcodes)
-                    new_items_count = len(new_items)
-                    
-                    if new_items:
-                        # Generate new items Excel
-                        safe_invoice_num = "".join([c if c.isalnum() or c in ('-','_') else '_' for c in str(order.invoice_number)])
-                        new_items_excel = f"/tmp/new_items_{safe_invoice_num}.xlsx" if os.name != 'nt' else f"new_items_{safe_invoice_num}.xlsx"
-                        generate_new_items_excel(new_items, supplier_code, new_items_excel)
-                        
-                        # Add new items to database
-                        items_to_add = [
-                            {"barcode": item.barcode, "name": item.description}
-                            for item in new_items
-                        ]
-                        added = items_service.add_new_items_batch(items_to_add)
-                        logging.info(f"Added {added} new items to database")
-                        
-                        # Track added items for Revert functionality
-                        added_barcodes = [item.barcode for item in new_items]
-                
-            except Exception as new_items_err:
-                logging.error(f"Error in new items detection: {new_items_err}", exc_info=True)
-                # Continue with normal processing even if new items detection fails
-            
-            # Generate main Excel
-            safe_invoice_num = "".join([c if c.isalnum() or c in ('-','_') else '_' for c in str(order.invoice_number)])
-            excel_filename = f"/tmp/extracted_{safe_invoice_num}.xlsx" if os.name != 'nt' else f"extracted_{safe_invoice_num}.xlsx"
-            generate_excel_from_order(order, excel_filename)
-            
-            # Build reply body
-            body_lines = [
+            all_attachments = [temp_path] # Original file first
+            all_body_parts = [
                 get_text("email_greeting"),
                 f"",
                 get_text("email_processed_intro", subject=subject),
-                f"",
-                get_text("email_attachments"),
-                get_text("email_att_original", filename=attachment_filename),
-                get_text("email_att_extracted", count=len(order.line_items)),
-                get_text("email_att_supplier", name=supplier_name, code=supplier_code),
+                f""
             ]
-            
-            if new_items_count > 0:
-                body_lines.append(get_text("email_att_new_items", count=new_items_count))
-            
-            # Check for extraction failures
-            extraction_warnings = []
-            
-            if extraction_warnings:
-                body_lines.append(f"")
-                body_lines.append(get_text("email_warn_phase2", fields=', '.join(extraction_warnings)))
-            
-            if supplier_unknown:
-                body_lines.append(f"")
-                body_lines.append(get_text("email_warn_unknown"))
-            
-            if invalid_barcode_count > 0:
-                 body_lines.append(f"")
-                 body_lines.append(get_text("email_warn_barcodes", count=invalid_barcode_count))
-            
-            # Check for MISSING barcodes in the final output (items that were kept but have no barcode)
-            missing_barcode_count = sum(1 for item in order.line_items if not item.barcode or not str(item.barcode).strip())
-            if missing_barcode_count > 0:
-                body_lines.append(f"")
-                body_lines.append(get_text("email_warn_no_barcode", count=missing_barcode_count))
-            
-            # Add Validation Warnings if any
-            if hasattr(order, 'warnings') and order.warnings:
-                body_lines.append(f"")
-                for w in order.warnings:
-                    body_lines.append(f"⚠️ {w}")
-            
-            # Try to create session for web UI editing
-            edit_link = None
-            try:
-                # Prepare new_items data for dashboard display
-                new_items_data = []
-                if 'new_items' in locals() and new_items:
-                    new_items_data = [
-                        {
-                            'barcode': str(item.barcode) if item.barcode else '',
-                            'description': item.description,
-                            'final_net_price': item.final_net_price or 0
-                        }
-                        for item in new_items
-                    ]
-                
-                # Prepare metadata
-                session_metadata = {
-                    "subject": subject,
-                    "sender": sender,
-                    "filename": attachment_filename,
-                    "source_file_uri": source_file_uri,
-                    "added_items_barcodes": added_barcodes if 'added_barcodes' in locals() else [],
-                    "new_items": new_items_data  # For dashboard new items section
-                }
-                
-                session_id = create_session(order, session_metadata)
-                edit_link = f"{WEB_UI_URL}?session={session_id}"
-                logging.info(f"Created session: {session_id}")
-            except Exception as session_err:
-                logging.warning(f"Could not create session (expected in Cloud Functions): {session_err}")
 
-            if edit_link:
-                body_lines.append(f"")
-                body_lines.append(get_text("email_edit_link"))
-                body_lines.append(edit_link)
+            # Initialize items service once
+            items_service = ItemsService()
             
-            body_lines.append(f"")
-            body_lines.append(get_text("email_signoff"))
-            body = "\n".join(body_lines)
+            for i, order in enumerate(orders):
+                logging.info(f"Processing Order {i+1}/{len(orders)} (Invoice: {order.invoice_number})")
+                
+                # === SUPPLIER MATCHING (Fallback if Phase 1 was uncertain) ===
+                current_supplier_code = detected_supplier_code
+                if current_supplier_code == "UNKNOWN" or detection_confidence < 0.7:
+                    logging.info(f"Fallback matching for order {i+1}...")
+                    fallback_code = supplier_service.match_supplier(
+                        global_id=order.supplier_global_id,
+                        email=order.supplier_email,
+                        phone=order.supplier_phone
+                    )
+                    if fallback_code != "UNKNOWN":
+                        current_supplier_code = fallback_code
+                
+                supplier_unknown = supplier_service.is_unknown(current_supplier_code)
+                supplier_data = supplier_service.get_supplier(current_supplier_code) if not supplier_unknown else None
+                supplier_name = supplier_data.get('name', 'Unknown Supplier') if supplier_data else 'Unknown Supplier'
+                
+                order.supplier_name = supplier_name
+                order.supplier_code = current_supplier_code
+
+                # === NEW ITEMS DETECTION ===
+                new_items_count = 0
+                invalid_barcode_count = 0
+                added_barcodes = []
+                new_items_excel = None
+                
+                try:
+                    all_barcodes = [str(item.barcode).strip() for item in order.line_items if item.barcode]
+                    valid_barcodes = [b for b in all_barcodes if len(b) >= 11]
+                    invalid_barcode_count = len(all_barcodes) - len(valid_barcodes)
+                    
+                    new_barcodes = items_service.get_new_barcodes(valid_barcodes)
+                    if new_barcodes:
+                        new_items = filter_new_items_from_order(order, new_barcodes)
+                        new_items_count = len(new_items)
+                        if new_items:
+                            safe_inv = "".join([c if c.isalnum() or c in ('-','_') else '_' for c in str(order.invoice_number or f"order_{i+1}")])
+                            new_items_excel = f"/tmp/new_items_{safe_inv}.xlsx" if os.name != 'nt' else f"new_items_{safe_inv}.xlsx"
+                            generate_new_items_excel(new_items, current_supplier_code, new_items_excel)
+                            all_attachments.append(new_items_excel)
+                            
+                            items_to_add = [{"barcode": item.barcode, "name": item.description} for item in new_items]
+                            items_service.add_new_items_batch(items_to_add)
+                            added_barcodes = [item.barcode for item in new_items]
+                except Exception as e:
+                    logging.error(f"Error in new items detection for order {i+1}: {e}")
+
+                # Generate main Excel
+                safe_inv = "".join([c if c.isalnum() or c in ('-','_') else '_' for c in str(order.invoice_number or f"order_{i+1}")])
+                excel_filename = f"/tmp/extracted_{safe_inv}.xlsx" if os.name != 'nt' else f"extracted_{safe_inv}.xlsx"
+                generate_excel_from_order(order, excel_filename)
+                all_attachments.append(excel_filename)
+                
+                # Build order summary for email
+                order_summary = [
+                    f"--- {get_text('order')} {i+1} : {order.invoice_number or 'N/A'} ---",
+                    get_text("email_att_extracted", count=len(order.line_items)),
+                    get_text("email_att_supplier", name=supplier_name, code=current_supplier_code),
+                ]
+                
+                if new_items_count > 0:
+                    order_summary.append(get_text("email_att_new_items", count=new_items_count))
+                
+                if supplier_unknown:
+                    order_summary.append(f"⚠️ {get_text('email_warn_unknown')}")
+                
+                if invalid_barcode_count > 0:
+                     order_summary.append(f"⚠️ {get_text('email_warn_barcodes', count=invalid_barcode_count)}")
+                
+                missing_barcode_count = sum(1 for item in order.line_items if not item.barcode or not str(item.barcode).strip())
+                if missing_barcode_count > 0:
+                    order_summary.append(f"⚠️ {get_text('email_warn_no_barcode', count=missing_barcode_count)}")
+                
+                if hasattr(order, 'warnings') and order.warnings:
+                    for w in order.warnings:
+                        order_summary.append(f"⚠️ {w}")
+                
+                # Create session for dashboard
+                try:
+                    new_items_data = []
+                    if 'new_items' in locals() and new_items:
+                        new_items_data = [{'barcode': str(item.barcode), 'description': item.description, 'final_net_price': item.final_net_price or 0} for item in new_items]
+                    
+                    session_metadata = {
+                        "subject": subject,
+                        "sender": sender,
+                        "filename": attachment_filename,
+                        "source_file_uri": source_file_uri,
+                        "added_items_barcodes": added_barcodes,
+                        "new_items": new_items_data
+                    }
+                    session_id = create_session(order, session_metadata)
+                    edit_link = f"{WEB_UI_URL}?session={session_id}"
+                    order_summary.append(f"{get_text('email_edit_link')}: {edit_link}")
+                except Exception as e:
+                    logging.warning(f"Could not create session for order {i+1}: {e}")
+
+                all_body_parts.extend(order_summary)
+                all_body_parts.append("") # Spacer between orders
+
+            all_body_parts.append(get_text("email_signoff"))
+            body = "\n".join(all_body_parts)
             
-            # Collect attachments (include original document)
-            attachments = [temp_path, excel_filename]  # Original file first
-            if new_items_excel:
-                attachments.append(new_items_excel)
-            
-            send_reply(service, thread_id, msg_id_header, sender, subject, body, attachments)
+            send_reply(service, thread_id, msg_id_header, sender, subject, body, all_attachments)
             return True
         else:
-            logging.warning("Extraction returned None.")
+            logging.warning("Extraction returned no orders.")
             send_reply(service, thread_id, msg_id_header, sender, subject, get_text("email_fail_body"), None)
             return False
     except Exception as inner_e:
@@ -428,10 +374,27 @@ def process_unread_emails():
         logging.info(f"Found {len(messages)} unread messages.")
         
         processed_count = 0
+        
+        # Initialize Idempotency Service
+        from src.shared.idempotency_service import IdempotencyService
+        idempotency = IdempotencyService()
+
         for msg_item in messages:
             msg_id = msg_item['id']
-            # Fetch full details
-            msg = service.users().messages().get(userId='me', id=msg_id).execute()
+            
+            # === IDEMPOTENCY CHECK ===
+            # Try to acquire lock for this message ID
+            if not idempotency.check_and_lock_message(msg_id):
+                logging.info(f"Skipping message {msg_id}: Already processed or locked.")
+                continue
+                
+            try:
+                # Fetch full details
+                msg = service.users().messages().get(userId='me', id=msg_id).execute()
+            except Exception as msg_err:
+                logging.error(f"Failed to fetch message details for {msg_id}: {msg_err}")
+                continue
+
             
             # Check if it's still unread (double check)
             if 'UNREAD' not in msg['labelIds']:
@@ -499,14 +462,26 @@ def process_unread_emails():
             
             if found_attachments:
                 logging.info(f"Found {len(found_attachments)} attachments.")
+                all_success = True
                 for att in found_attachments:
-                    process_single_attachment(service, thread_id, msg_id_header, sender, subject, email_body_text, att['data'], att['filename'], att['mime_type'])
+                    success = process_single_attachment(service, thread_id, msg_id_header, sender, subject, email_body_text, att['data'], att['filename'], att['mime_type'])
+                    if not success:
+                        all_success = False
+                
                 processed_count += 1
+                idempotency.mark_message_completed(msg_id, success=all_success)
             else:
                 logging.info("No supported attachment found (PDF or Excel).")
-        
+                # Still mark as completed so we don't keep checking it
+                idempotency.mark_message_completed(msg_id, success=True)
+            
+            # except Exception is caught in the outer block, but we need to mark failed there too?
+            # The outer try/except (line 523) breaks the whole loop. 
+            # We should probably wrap the inner message processing to be safe.
+
         return processed_count
 
     except Exception as e:
         logging.error(f"Error processing messages: {e}", exc_info=True)
         return 0
+

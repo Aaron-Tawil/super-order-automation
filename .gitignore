@@ -11,3 +11,5 @@ deploy_env.yaml
 .DS_Store
 .idea/
 .vscode/
+data-excel/
+tests-data/

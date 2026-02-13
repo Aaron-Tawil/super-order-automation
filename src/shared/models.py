@@ -1,7 +1,7 @@
 import re
 from enum import StrEnum
 from typing import List, Optional
-from pydantic import BaseModel, Field, model_validator, field_validator
+from pydantic import BaseModel, Field, model_validator, field_validator, AliasChoices
 from src.shared.constants import VAT_RATE
 
 class VatStatus(StrEnum):
@@ -11,12 +11,12 @@ class VatStatus(StrEnum):
 
 class LineItem(BaseModel):
     barcode: Optional[str] = Field(None, description="EAN or Supplier SKU")
-    description: str = Field(..., description="Product name or description")
+    description: str = Field("Unknown Item", description="Product name or description")
     quantity: Optional[float] = Field(0.0, description="Number of units")
     
     # Financials
     raw_unit_price: Optional[float] = Field(0.0, description="Price per unit as listed on the line")
-    vat_status: VatStatus = Field(..., description="Is VAT included in the raw_unit_price?")
+    vat_status: VatStatus = Field(VatStatus.EXCLUDED, description="Is VAT included in the raw_unit_price?")
     discount_percentage: float = Field(0.0, description="Line-specific discount", ge=0, le=100)
     
     # Promotion handling (e.g., "11+1 free")
@@ -39,7 +39,7 @@ class LineItem(BaseModel):
             return None
         return clean_v
 
-    @field_validator('quantity', 'raw_unit_price', 'final_net_price', mode='before')
+    @field_validator('quantity', 'raw_unit_price', 'final_net_price', 'discount_percentage', mode='before')
     @classmethod
     def coerce_none_to_default(cls, v, info):
         if v is None:
@@ -56,8 +56,8 @@ class LineItem(BaseModel):
 
 class ExtractedOrder(BaseModel):
     # Note: supplier_name removed - we get supplier from Phase 1 detection
-    invoice_number: Optional[str]
-    currency: str = "USD"
+    invoice_number: Optional[str] = None
+    currency: str = "ILS"
     
     # Validation Warnings
     warnings: List[str] = Field(default_factory=list, description="List of warnings or errors found during validation")
@@ -79,9 +79,10 @@ class ExtractedOrder(BaseModel):
     
     # Document totals for validation
     document_total_with_vat: Optional[float] = Field(None, description="Final total amount from bottom of invoice (usually includes VAT)")
+    document_total_quantity: Optional[float] = Field(None, description="Total quantity of items from bottom of invoice")
     vat_rate: Optional[float] = Field(VAT_RATE * 100, description=f"VAT rate as percentage (e.g., {VAT_RATE * 100} for {VAT_RATE * 100}%)")
     
-    line_items: List[LineItem]
+    line_items: List[LineItem] = Field(..., validation_alias=AliasChoices('line_items', 'items'))
     
     @field_validator('global_discount_percentage', 'total_invoice_discount_amount', 'vat_rate', mode='before')
     @classmethod
@@ -95,3 +96,6 @@ class ExtractedOrder(BaseModel):
             return defaults.get(info.field_name, 0.0)
         return v
 
+
+class MultiOrderResponse(BaseModel):
+    orders: List[ExtractedOrder] = Field(..., description="List of all orders extracted from the document")

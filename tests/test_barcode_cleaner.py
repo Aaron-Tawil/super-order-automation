@@ -31,16 +31,16 @@ def test_barcode_cleaning():
             )
             
             if item.barcode == expected:
-                print(f"  ✅ PASS: Got '{item.barcode}'")
+                print(f"  [PASS]: Got '{item.barcode}'")
             else:
-                print(f"  ❌ FAIL: Got '{item.barcode}', Expected '{expected}'")
+                print(f"  [FAIL]: Got '{item.barcode}', Expected '{expected}'")
                 sys.exit(1)
                 
         except ValidationError as e:
-            print(f"  ❌ Validation Error: {e}")
+            print(f"  [FAIL] Validation Error: {e}")
             sys.exit(1)
             
-    print("\n✅ All barcode tests passed!")
+    print("\n[PASS] All barcode tests passed!")
 
 if __name__ == "__main__":
     test_barcode_cleaning()

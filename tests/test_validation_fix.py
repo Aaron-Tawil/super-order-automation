@@ -39,7 +39,7 @@ def test_validation_fix():
 
     try:
         order = ExtractedOrder.model_validate_json(raw_json)
-        print("✅ Validation successful!")
+        print("[PASS] Validation successful!")
         
         # Check defaults
         bad_item = order.line_items[1]
@@ -49,14 +49,14 @@ def test_validation_fix():
         assert bad_item.quantity == 0.0
         assert bad_item.raw_unit_price == 0.0
         assert bad_item.final_net_price == 0.0
-        print("✅ Defaults valid.")
+        print("[PASS] Defaults valid.")
 
     except ValidationError as e:
-        print("❌ Validation Failed!")
+        print("[FAIL] Validation Failed!")
         print(e)
         sys.exit(1)
     except Exception as e:
-        print(f"❌ Unexpected Error: {e}")
+        print(f"[FAIL] Unexpected Error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

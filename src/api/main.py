@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
     """
     Initialize the Gemini Client on startup.
     """
-    project_id = os.getenv("GCP_PROJECT_ID")
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT_ID")
     location = os.getenv("GCP_LOCATION", "us-central1")
     api_key = os.getenv("GEMINI_API_KEY")
     

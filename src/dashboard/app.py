@@ -33,7 +33,7 @@ env_file = find_dotenv(usecwd=True)
 load_dotenv(env_file, override=True)
 
 API_KEY = os.getenv("GEMINI_API_KEY")
-PROJECT_ID = os.getenv("GCP_PROJECT_ID")
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT_ID")
 
 # Verify connection
 if not API_KEY and not PROJECT_ID:
@@ -43,62 +43,13 @@ if not API_KEY and not PROJECT_ID:
 # Page config
 st.set_page_config(page_title=get_text("dashboard_title"), layout="wide", initial_sidebar_state="expanded")
 
-# Inject RTL CSS
-st.markdown("""
-    <style>
-    body {
-        direction: rtl;
-        text-align: right;
-    }
-    .stApp {
-        direction: rtl;
-    }
-    /* Align Streamlit widgets to right */
-    .stTextInput > label, .stSelectbox > label, .stNumberInput > label, .stTextArea > label, .stFileUploader > label {
-        text-align: right;
-        width: 100%;
-        display: block;
-        float: right;
-    }
-    /* Force headers and markdown to right align */
-    h1, h2, h3, h4, h5, h6, .stMarkdown, .stText, p {
-        text-align: right !important;
-    }
-    /* Fix for metrics label */
-    [data-testid="stMetricLabel"] {
-        justify-content: flex-end;
-    }
-    /* Metrics alignment - handled above */
-    [data-testid="stMetricValue"] {
-        justify-content: right;
-    }
-    /* Sidebar alignment (tricky in pure CSS but we try) */
-    [data-testid="stSidebar"] {
-        direction: rtl; 
-        text-align: right;
-    }
-    /* Toast/Alert alignment */
-    .stAlert {
-        direction: rtl;
-        text-align: right;
-    }
-    /* Button alignment in columns */
-    .stButton button {
-        float: right;
-    }
-    
-    /* Hide the 'Deploy' button and hamburger menu */
-    .stAppDeployButton {
-        display: none;
-    }
-    
-    /* Hide sidebar collapse button - Force with !important and multiple selectors */
-    [data-testid="stSidebarCollapsedControl"], section[data-testid="stSidebar"] > div > div:first-child button {
-        display: none !important;
-        visibility: hidden !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+# Load external CSS
+def load_css(file_path):
+    with open(file_path) as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+css_path = os.path.join(os.path.dirname(__file__), "styles.css")
+load_css(css_path)
 
 # --- Session Loading Logic ---
 # Check for session token in URL (from email link)
@@ -141,7 +92,7 @@ with st.sidebar:
 
     st.divider()
     # Debug Info
-    if API_KEY:
+    if API_KEY or PROJECT_ID:
         st.sidebar.success("AI מחובר למערכת ✅") # More meaningful text
     else:
         st.sidebar.error("מפתח AI חסר ❌")

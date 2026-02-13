@@ -144,6 +144,7 @@ def show_edit_form(supplier_service: SupplierService, supplier_code: str, suppli
                     special_instructions=instructions
                 )
                 if success:
+                    st.cache_data.clear() # Clear cache on update
                     st.success(get_text("msg_update_success", code=supplier_code))
                     # Clear selection and refresh using key versioning
                     st.session_state['selected_supplier'] = None
@@ -224,6 +225,7 @@ def show_add_form(supplier_service: SupplierService):
                     special_instructions=instructions.strip() if instructions else None
                 )
                 if success:
+                    st.cache_data.clear() # Clear cache on add
                     st.success(get_text("msg_add_success", code=code))
                     st.session_state['show_add_form'] = False
                     st.rerun()
@@ -239,10 +241,15 @@ def main():
     st.title(get_text("sm_title"))
     st.markdown(get_text("sm_subtitle"))
     
+
+    @st.cache_data(ttl=60)
+    def get_cached_suppliers(_service):
+        return _service.get_all_suppliers()
+
     # Initialize supplier service
     try:
         supplier_service = SupplierService()
-        suppliers = supplier_service.get_all_suppliers()
+        suppliers = get_cached_suppliers(supplier_service)
     except Exception as e:
         st.error(get_text("sm_conn_fail", error=e))
         st.info(get_text("sm_conn_cred_hint"))

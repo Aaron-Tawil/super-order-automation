@@ -33,22 +33,29 @@ def generate_excel_from_order(order: ExtractedOrder, output_path: str):
     data = []
     
     # We might want to optimize this with a batch get if possible, but loop is fine for typical order sizes
+    # Collect all barcodes
+    barcodes = [str(item.barcode).strip() for item in order.line_items if item.barcode]
+    
+    # Bulk lookup for item codes
+    # Returns list of dicts: [{'barcode': '...', 'item_code': '...', ...}, ...]
+    item_lookup = {}
+    if barcodes:
+        try:
+            db_items = items_service.get_items_batch(barcodes)
+            for db_item in db_items:
+                # Map barcode to item_code (if present, else fallback to barcode)
+                b_code = str(db_item.get('barcode'))
+                i_code = db_item.get('item_code')
+                if i_code:
+                    item_lookup[b_code] = i_code
+        except Exception as e:
+            print(f"Warning: Failed to batch lookup items: {e}")
+
     for item in order.line_items:
         barcode = str(item.barcode).strip() if item.barcode else ""
-        item_code_val = barcode # Default to barcode
-        
-        if barcode:
-            # Try to find existing item to get the real item_code
-            # search_items checks for exact match on document ID (barcode) first
-            results = items_service.search_items(barcode)
-            if results:
-                # Assuming the exact match is the first one or the one with matching barcode
-                for res in results:
-                    if str(res.get('barcode')) == barcode:
-                        db_code = res.get('item_code')
-                        if db_code:
-                            item_code_val = db_code
-                        break
+        # Default to barcode, override if found in lookup
+        item_code_val = item_lookup.get(barcode, barcode)
+
         
         row = {
             'קוד פריט': _clean_str(item_code_val),

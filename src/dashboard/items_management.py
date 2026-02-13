@@ -24,9 +24,13 @@ def _clean_numeric_str(val) -> Optional[str]:
 def render_items_management_page():
     items_service = ItemsService()
     
+    @st.cache_data(ttl=60)
+    def get_total_count(_service):
+         return _service.get_total_items_count()
+
     # Get total count for display
     try:
-        total_items = items_service.get_total_items_count()
+        total_items = get_total_count(items_service)
         header_text = get_text("im_header_total_count", count=total_items)
     except Exception as e:
         logger.error(f"Failed to get item count: {e}")
@@ -91,6 +95,7 @@ def render_items_management_page():
                          submitted = st.form_submit_button(get_text("im_btn_update"))
                          if submitted:
                              if items_service.update_item(current_barcode, new_name, new_code, new_note):
+                                 st.cache_data.clear() # Clear cache on update
                                  st.session_state['item_updated_msg'] = get_text("im_msg_update_success")
                                  st.rerun()
                              else:
@@ -119,6 +124,7 @@ def render_items_management_page():
                         st.error(get_text("im_msg_add_fail"))
                     else:
                         if items_service.add_new_item(new_barcode, new_name, new_item_code, new_note):
+                            st.cache_data.clear() # Clear cache on add
                             st.success(get_text("im_msg_add_success", name=new_name))
                         else:
                             st.error(get_text("im_msg_add_fail"))
@@ -182,6 +188,7 @@ def render_items_management_page():
                     if st.button("הוסף פריטים למערכת"):
                          with st.status("מעבד...", expanded=True):
                              added = items_service.add_new_items_batch(items_to_add)
+                             st.cache_data.clear() # Clear cache on batch add
                              st.success(get_text("im_batch_success", count=added))
                 else:
                     st.warning("לא נמצאו פריטים תקינים או שחסרים שדות חובה (ברקוד, שם, קוד פריט).")
@@ -212,6 +219,7 @@ def render_items_management_page():
                 
                 if st.button(get_text("im_btn_delete"), type="primary", key="del_single_btn"):
                     if items_service.delete_items_by_barcodes([to_delete['barcode']]) > 0:
+                        st.cache_data.clear() # Clear cache on delete
                         st.session_state['item_deleted_msg'] = get_text("im_msg_del_success", name=to_delete.get('name'))
                         st.rerun()
                     else:
@@ -266,6 +274,7 @@ def render_items_management_page():
                     if st.button("מחק פריטים אלו", type="primary"):
                         with st.status("מוחק...", expanded=True):
                             deleted_count = items_service.delete_items_by_barcodes(barcodes_to_del)
+                            st.cache_data.clear() # Clear cache on batch delete
                             st.success(get_text("im_del_batch_success", count=deleted_count))
                 else:
                     st.warning("לא נמצאו ברקודים תקינים בקובץ (ודא כותרת 'ברקוד').")
@@ -347,6 +356,7 @@ def render_items_management_page():
                                 status.write(get_text("im_status_success_batched", count=added_count))
                                 status.update(label=get_text("im_status_complete"), state="complete")
                                 
+                            st.cache_data.clear() # Clear cache on reset
                             st.success(get_text("im_msg_reset_success", old=deleted_count, new=added_count))
                             
             except Exception as e:

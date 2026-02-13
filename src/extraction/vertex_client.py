@@ -2,16 +2,24 @@ from google import genai
 from google.genai import types
 import os
 import re
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import sys
 import pandas as pd
 import io
+import json
+import logging
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, retry_if_exception, before_sleep_log
+from google.genai import errors
+from google.genai import errors
+import openpyxl
+import zipfile
+import xml.etree.ElementTree as ET
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
-from src.shared.models import ExtractedOrder
-from src.shared.constants import VAT_RATE, VALIDATION_TOLERANCE
+from src.shared.models import ExtractedOrder, MultiOrderResponse
+from src.shared.constants import VAT_RATE, VALIDATION_TOLERANCE, MAX_RETRIES
 
 # Emails to exclude from supplier detection context
 EXCLUDED_EMAILS = [
@@ -28,7 +36,158 @@ SUPPLIERS_EXCEL_PATH = os.path.join(
 # Global client variable
 _client = None
 
-def init_client(project_id: str = None, location: str = "us-central1", api_key: str = None):
+def read_excel_safe(file_path: str) -> pd.DataFrame:
+    """
+    Robust Excel reader that handles files with invalid XML/styles
+    by falling back to openpyxl in read-only/data-only mode.
+    """
+    try:
+        # Try standard pandas read (fastest, preserves logic)
+        return pd.read_excel(file_path)
+    except Exception as e:
+        print(f"Standard pd.read_excel failed: {e}. Attempting fallback with openpyxl...")
+        try:
+            # Fallback: Read using openpyxl directly in read-only mode (ignores styles)
+            wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+            try:
+                ws = wb.active
+                data = ws.values
+                # Get columns from first row
+                columns = next(data)
+                # Create DataFrame from remaining rows
+                df = pd.DataFrame(data, columns=columns)
+                print("Fallback Excel read successful.")
+                return df
+            finally:
+                wb.close()
+        except Exception as fallback_e:
+            print(f"Fallback Excel read (openpyxl) failed: {fallback_e}")
+            
+            print("Attempting Level 3 Fallback: Raw XML Parsing...")
+            try:
+                # Level 3: Raw XML parsing (bypassing openpyxl entirely)
+                return read_xlsx_via_xml(file_path)
+            except Exception as xml_e:
+                print(f"Level 3 XML read failed: {xml_e}")
+                # Raise the ORIGINAL error (usually the most descriptive) or the last one
+                raise e
+
+def read_xlsx_via_xml(file_path: str) -> pd.DataFrame:
+    """
+    Parses an XLSX file by directly reading the XML components, 
+    bypassing openpyxl's validation/stylesheet loading.
+    
+    This is used when the file has corrupted styles/XML that openpyxl can't handle.
+    """
+    with zipfile.ZipFile(file_path, 'r') as z:
+        # 1. Load Shared Strings (if exists)
+        shared_strings = []
+        if 'xl/sharedStrings.xml' in z.namelist():
+            with z.open('xl/sharedStrings.xml') as f:
+                tree = ET.parse(f)
+                root = tree.getroot()
+                # Namespace usually: {http://schemas.openxmlformats.org/spreadsheetml/2006/main}
+                # But using local name is safer
+                for si in root.findall('.//{*}si'):
+                    # Text can be in <t> directly or in <r><t> (rich text)
+                    text_nodes = si.findall('.//{*}t')
+                    text = "".join(node.text or "" for node in text_nodes)
+                    shared_strings.append(text)
+        
+        # 2. Load Worksheet (assume sheet1 for now, or find first available)
+        sheet_path = None
+        # Try finding regular worksheet list
+        for name in z.namelist():
+            if name.startswith('xl/worksheets/sheet') and name.endswith('.xml'):
+                sheet_path = name
+                break
+        
+        if not sheet_path:
+            raise ValueError("No worksheet found in XLSX archive")
+            
+        print(f"Parsing raw XML from {sheet_path}...")
+        
+        data_rows = []
+        with z.open(sheet_path) as f:
+            # Iterative parsing to save memory
+            context = ET.iterparse(f, events=('end',))
+            
+            current_row = []
+            
+            for event, elem in context:
+                if elem.tag.endswith('row'):
+                    # Finish row
+                    data_rows.append(current_row)
+                    current_row = []
+                    elem.clear() # Free memory
+                elif elem.tag.endswith('c'):
+                    # Cell
+                    cell_type = elem.get('t')
+                    cell_value = None
+                    
+                    # Find value node <v>
+                    v_node = elem.find('.//{*}v')
+                    if v_node is not None and v_node.text:
+                        val = v_node.text
+                        if cell_type == 's': # Shared String
+                            try:
+                                idx = int(val)
+                                cell_value = shared_strings[idx] if idx < len(shared_strings) else val
+                            except:
+                                cell_value = val
+                        elif cell_type == 'b': # Boolean
+                            cell_value = (val == '1')
+                        else:
+                            # Try number
+                            try:
+                                cell_value = float(val) if '.' in val else int(val)
+                            except:
+                                cell_value = val
+                    
+                    # Direct inline string <is><t>...
+                    if cell_value is None and cell_type == 'inlineStr':
+                        t_node = elem.find('.//{*}is/{*}t')
+                        if t_node is not None:
+                            cell_value = t_node.text
+
+                    # Note: XML doesn't strictly guarantee column order if empty cells are skipped.
+                    # For simplicity in this fallback, we just append. 
+                    # Providing full grid support requires parsing 'r' attribute (e.g. A1, B1).
+                    current_row.append(cell_value)
+    
+    if not data_rows:
+        return pd.DataFrame()
+        
+    # Calculate max columns across ALL rows to ensure no data is lost
+    max_cols = max(len(r) for r in data_rows)
+    
+    # Pad all rows to max_cols to ensure consistent DataFrame structure
+    normalized_data = []
+    for row in data_rows:
+        padding = [None] * (max_cols - len(row))
+        normalized_data.append(row + padding)
+        
+    print(f"Level 3 XML extraction successful. Max columns: {max_cols}")
+    
+    # Create DataFrame using the first row as the header to match pd.read_excel default behavior
+    # But generate names for the extra columns
+    header_row = normalized_data[0]
+    data_body = normalized_data[1:]
+    
+    # Handle duplicate columns in header if any (pandas does this automatically usually, but we are manual here)
+    # We'll just pass the data and headers to DataFrame constructor
+    # However, if header_row has None values for the extra columns, we should give them names
+    columns = []
+    for i, col in enumerate(header_row):
+        if col is None:
+            columns.append(f"Unnamed: {i}")
+        else:
+            columns.append(str(col))
+            
+    return pd.DataFrame(data_body, columns=columns)
+
+
+def init_client(project_id: str = None, location: str = "global", api_key: str = None):
     """
     Initialize the Gen AI Client.
     Priority:
@@ -37,18 +196,56 @@ def init_client(project_id: str = None, location: str = "us-central1", api_key: 
     """
     global _client
     
-    if api_key:
-        print("Initializing Gen AI Client with API KEY (AI Studio mode)...")
-        _client = genai.Client(api_key=api_key)
-    elif project_id:
+    # Priority: Vertex AI (Project) > API Key (Studio)
+    if project_id:
         print(f"Initializing Gen AI Client with VERTEX AI (Project: {project_id})...")
         _client = genai.Client(
             vertexai=True, 
             project=project_id, 
             location=location
         )
+    elif api_key:
+        print("Initializing Gen AI Client with API KEY (AI Studio mode)...")
+        _client = genai.Client(api_key=api_key)
     else:
-        print("Error: Must provide either api_key OR project_id.")
+        print("Error: Must provide either project_id OR api_key.")
+
+
+def is_retryable_error(exception):
+    """
+    Retry on 5xx Server Errors OR 429 Resource Exhausted (Quota) errors.
+    """
+    if isinstance(exception, errors.ServerError):
+        return True
+    if isinstance(exception, errors.ClientError):
+        # Check for 429 in various attributes or string representation
+        # It's safer to be broad here for 429 specifically
+        code = getattr(exception, 'code', None) or getattr(exception, 'status_code', None)
+        if code == 429:
+            return True
+        if "429" in str(exception) or "RESOURCE_EXHAUSTED" in str(exception):
+            return True
+    return False
+
+@retry(
+    retry=retry_if_exception(is_retryable_error),
+    stop=stop_after_attempt(8),  # Increased to 8 attempts for 429 handling
+    wait=wait_exponential(multiplier=2, min=4, max=120), # Increased max wait to 120s for backoff
+    before_sleep=before_sleep_log(logging.getLogger(), logging.WARNING)
+)
+def generate_content_safe(model, contents, config):
+    """
+    Wrapper for generate_content with robust retries for 503 Service Unavailable errors.
+    """
+    global _client
+    if not _client:
+        raise ValueError("Client not initialized")
+    
+    return _client.models.generate_content(
+        model=model,
+        contents=contents,
+        config=config
+    )
 
 
 def filter_email_context(email_text: str) -> str:
@@ -164,7 +361,7 @@ def detect_supplier(
         elif invoice_mime_type and ('excel' in invoice_mime_type.lower() or 'spreadsheet' in invoice_mime_type.lower()):
             # Excel file - convert to CSV text
             try:
-                df = pd.read_excel(invoice_file_path)
+                df = read_excel_safe(invoice_file_path)
                 excel_csv = df.to_csv(index=False)
                 invoice_context = f"INVOICE DATA (Excel converted to CSV):\n{excel_csv}"
             except Exception as e:
@@ -194,10 +391,10 @@ SUPPLIER DATABASE (CSV format):
 
 INSTRUCTIONS:
 1. Look for supplier identifiers in BOTH the email AND invoice:
-   - Company name
+- Business ID (עוסק/ח"פ) - usually a 9-digit number *Prioritize this.*
+   - Company name (fuzzy match).
    - Phone number
    - Email address
-   - Business ID (עוסק/ח"פ) - usually a 9-digit number
    - Logo or letterhead text
 2. Match these identifiers to the supplier database.
 3. The supplier "קוד" (code) column is what you need to return.
@@ -205,12 +402,7 @@ INSTRUCTIONS:
 5. If you find a clear match, return the supplier code.
 6. If you cannot find a confident match, return "UNKNOWN".
 
-Return your response in this exact JSON format:
-{{
-    "supplier_code": "string (the קוד value from the database, or UNKNOWN)",
-    "confidence": float (0.0 to 1.0, how confident you are in the match),
-    "reasoning": "string (brief explanation of how you matched)"
-}}
+Output must strictly follow the defined schema.
 """
     
     # Add text prompt
@@ -219,7 +411,7 @@ Return your response in this exact JSON format:
     print("Phase 1: Detecting supplier from email + invoice context...")
     
     try:
-        response = _client.models.generate_content(
+        response = generate_content_safe(
             model="gemini-2.5-flash",
             contents=[
                 types.Content(
@@ -229,13 +421,22 @@ Return your response in this exact JSON format:
             ],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
+                response_schema={
+                    "type": "OBJECT",
+                    "properties": {
+                        "supplier_code": {"type": "STRING"},
+                        "confidence": {"type": "NUMBER"},
+                        "reasoning": {"type": "STRING"}
+                    },
+                    "required": ["supplier_code", "confidence", "reasoning"]
+                },
                 temperature=0.0
             )
         )
         
         raw_json = response.text.replace("```json", "").replace("```", "").strip()
         
-        import json
+
         result = json.loads(raw_json)
         
         supplier_code = result.get("supplier_code", "UNKNOWN")
@@ -272,7 +473,26 @@ def validate_order_totals(order: ExtractedOrder) -> Tuple[bool, float, float]:
     
     return is_valid, calculated_total_with_vat, diff
 
-def process_invoice(file_path: str, mime_type: str = None, email_context: str = None, supplier_instructions: str = None, retry_count: int = 0) -> Optional[ExtractedOrder]:
+def validate_order_quantity(order: ExtractedOrder) -> Tuple[bool, float, float]:
+    """
+    Validates that the sum of line item quantities matches the document total quantity.
+    
+    Returns:
+        Tuple[is_valid, calculated_total, difference]
+    """
+    if order.document_total_quantity is None:
+        # Cannot validate if no total quantity is extracted
+        return True, 0.0, 0.0
+
+    calculated_quantity = sum((item.quantity or 0) for item in order.line_items)
+    diff = abs(calculated_quantity - order.document_total_quantity)
+    
+    # Use a small tolerance for float comparison
+    is_valid = diff <= 0.1
+    
+    return is_valid, calculated_quantity, diff
+
+def process_invoice(file_path: str, mime_type: str = None, email_context: str = None, supplier_instructions: str = None, retry_count: int = 0) -> List[ExtractedOrder]:
     """
     Phase 2 LLM Call: Extract invoice details from document.
     Supports PDF and Excel files.
@@ -284,6 +504,9 @@ def process_invoice(file_path: str, mime_type: str = None, email_context: str = 
         email_context: Optional text from the email body to aid extraction (phone, address, etc)
         supplier_instructions: Optional supplier-specific extraction instructions from database
         retry_count: Internal counter for retries (max 1)
+    
+    Returns:
+        List of ExtractedOrder objects found in the document.
     """
     global _client
     if not _client:
@@ -308,7 +531,7 @@ def process_invoice(file_path: str, mime_type: str = None, email_context: str = 
             file_content = f.read()
     except FileNotFoundError:
         print(f"Error: File not found at {file_path}")
-        return None
+        return []
 
     # Handle Excel files by converting to text (CSV)
     excel_mime_types = [
@@ -321,14 +544,14 @@ def process_invoice(file_path: str, mime_type: str = None, email_context: str = 
     if mime_type in excel_mime_types:
         print(f"Excel detected ({mime_type}). Converting to CSV text for Gemini...")
         try:
-            df = pd.read_excel(file_path)
+            df = read_excel_safe(file_path)
             # Convert to CSV string
             csv_text = df.to_csv(index=False)
             file_part = types.Part.from_text(text=csv_text)
             print("Successfully converted Excel to CSV text.")
         except Exception as e:
             print(f"Error converting Excel file: {e}")
-            return None
+            return []
     else:
         # Default: Send as raw bytes (PDF, Image)
         file_part = types.Part.from_bytes(data=file_content, mime_type=mime_type)
@@ -345,24 +568,28 @@ def process_invoice(file_path: str, mime_type: str = None, email_context: str = 
     You are an expert data extraction assistant for an Accounting team.
     Extract the invoice details from this document into the required JSON format.
     
+    IMPORTANT: A single document may contain MULTIPLE separate orders/invoices. 
+    You MUST extract EACH order separately as its own object in the 'orders' list.
+    
     CRITICAL INSTRUCTIONS:
     1. EXTRACT EVERY SINGLE LINE ITEM. Do not summarize.
-    2. REPEATING ITEMS: If the same product appears in multiple rows (e.g., 11 units on one line, 1 unit on the next), EXTRACT BOTH ROWS SEPARATELY. Do not combine them yourself.
-    3. 'vat_status': Check if the column headers say "Price inc. VAT" (INCLUDED) or "Price exc. VAT" (EXCLUDED).
+    2. REPEATING ITEMS: If the same product appears in multiple rows (e.g., 11 units on one line, 1 unit on the next), EXTRACT BOTH ROWS SEPARATELY. Do not combine them yourself. and if the price is zero in one row leave it as zero.
+    3. 'vat_status': Check if the column headers say "Price inc. VAT" (INCLUDED) or "Price exc. VAT" (EXCLUDED). default to EXCLUDED.
     4. GLOBAL DISCOUNT: Look for a discount at the BOTTOM of the invoice that applies to ALL items.
        - This may appear as "הנחה כללית", "הנחה", "discount", or a percentage like "15.25%".
-       - Extract this as 'global_discount_percentage' (e.g., 15.25 for 15.25% off).
+       - Extract this as 'global_discount_percentage' (e.g., 10 for 10% off).
        - The 'final_net_price' for EACH line item must include this global discount!
     5. 'final_net_price' CALCULATION:
        - Start with 'raw_unit_price'.
        - Apply 'discount_percentage' (line level).
        - Apply 'global_discount_percentage' (invoice level).
        - VAT ADJUSTMENT:
-         * If 'vat_status' is "EXCLUDED", do nothing more.
+         * If 'vat_status' is "EXCLUDED", do nothing more. default to EXCLUDED.
          * If 'vat_status' is "INCLUDED", divide by (1 + vat_rate/100).
            -> CRITICAL EXCEPTION: If 'global_discount_percentage' is between 15.1% and 15.5% (e.g. 15.25%), this discount IS the VAT removal. TREAT THIS AS ALREADY EXCLUDING VAT. Do NOT divide by (1 + vat_rate/100) again.
     6. 'document_total_with_vat': Extract the FINAL TOTAL amount at the bottom of the invoice (סה"כ לתשלום).
-    7. 'vat_rate': If VAT rate is stated (17%, 18%, etc.), extract the number. Default to {VAT_RATE * 100}.
+    7. 'vat_rate': If VAT rate is stated (18%, etc.), extract the number. Default to {VAT_RATE * 100}.
+    8. 'document_total_quantity': Extract the TOTAL QUANTITY of items if stated at the bottom of the invoice (סה"כ כמות / פריטים).
 
     *** MANDATORY MATH SELF-CHECK ***
     Before finalizing the JSON, you MUST perform this internal calculation:
@@ -370,7 +597,7 @@ def process_invoice(file_path: str, mime_type: str = None, email_context: str = 
     2. Sum all line_total values.
     3. Apply VAT: grand_total = total_sum * (1 + vat_rate/100)
     4. Compare grand_total to the 'document_total_with_vat'.
-    5. If they don't match (within 0.05), you have made a calculation or extraction error. 
+    5. If they don't match (within 1.0) you have made a calculation or extraction error. 
        - RE-CHECK the quantities, unit prices, and discounts.
        - Ensure you converted 'INCLUDED' VAT prices to 'EXCLUDED' correctly.
     
@@ -380,28 +607,9 @@ def process_invoice(file_path: str, mime_type: str = None, email_context: str = 
     - START by looking for a column with long numeric strings (12-14 digits).
     - DO NOT extract internal supplier codes (usually short, 3-6 digits) as the barcode.
     - If the product has multiple codes, ALWAYS PREFER THE LONGER 13-DIGIT SEQUENCE.
+    - If no valid 12-14 digit barcode column exists, return null for the barcode field. Do NOT use internal codes (3-5 digits) or phone numbers as barcodes.
     
-    Return valid JSON matching this structure exactly:
-    {
-      "invoice_number": "string",
-      "global_discount_percentage": float (invoice-level discount as percentage, e.g., 15.25 for 15.25%),
-      "total_invoice_discount_amount": float (the absolute discount amount if shown),
-      "document_total_with_vat": float or null (final invoice total),
-      "vat_rate": float (VAT percentage, default {VAT_RATE * 100}),
-      "line_items": [
-        {
-          "barcode": "string (The 13-digit global barcode. Ignore short internal codes. Remove spaces/hyphens)",
-          "description": "string (product name)",
-          "quantity": float (total units for this specific line),
-          "raw_unit_price": float (price as listed in the table),
-          "vat_status": "INCLUDED" or "EXCLUDED",
-          "discount_percentage": float (line-specific discount only),
-          "paid_quantity": float or null (if explicitly stated),
-          "bonus_quantity": float or null (if explicitly stated),
-          "final_net_price": float (unit net AFTER global discount and excluding VAT)
-        }
-      ]
-    }
+    Output must strictly follow the defined schema.
     """
 
     # Add supplier-specific instructions AFTER general instructions with PRIORITY
@@ -417,21 +625,91 @@ def process_invoice(file_path: str, mime_type: str = None, email_context: str = 
     """
     
     # RETRY LOGIC: Add feedback if this is a retry
+    current_tools = None
+    current_schema = None
+    
+    # Define Schema for JSON Enforcement (Phase 2)
+    single_order_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "invoice_number": {"type": "STRING", "nullable": True},
+            "global_discount_percentage": {"type": "NUMBER", "nullable": True},
+            "total_invoice_discount_amount": {"type": "NUMBER", "nullable": True},
+            "document_total_with_vat": {"type": "NUMBER", "nullable": True},
+            "document_total_quantity": {"type": "NUMBER", "nullable": True},
+            "vat_rate": {"type": "NUMBER", "nullable": True},
+            "line_items": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "barcode": {"type": "STRING", "nullable": True},
+                        "description": {"type": "STRING"},
+                        "quantity": {"type": "NUMBER", "nullable": True},
+                        "raw_unit_price": {"type": "NUMBER", "nullable": True},
+                        "vat_status": {"type": "STRING", "enum": ["INCLUDED", "EXCLUDED", "EXEMPT"]},
+                        "discount_percentage": {"type": "NUMBER", "nullable": True},
+                        "final_net_price": {"type": "NUMBER", "nullable": True}
+                    },
+                    "required": ["description", "vat_status"]
+                }
+            }
+        },
+        "required": ["line_items"]
+    }
+
+    pdf_response_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "orders": {
+                "type": "ARRAY",
+                "items": single_order_schema
+            }
+        },
+        "required": ["orders"]
+    }
+
     if retry_count > 0:
-        print(f"⚠️ RETRY ATTEMPT {retry_count}: Adding feedback on failure.")
+        print(f"⚠️ RETRY ATTEMPT {retry_count}: Adding feedback and ENABLING CODE EXECUTION.")
         prompt_text += f"""
     
-    ⚠️ PREVIOUS ATTEMPT FAILED 
-    The previous extraction had a mismatch between the line items total and the document total.
-    Please be extremely careful with decimal places and ensuring that 'final_net_price' is calculated correctly.
+    ⚠️ PREVIOUS ATTEMPT FAILED validation of totals.
+    
+    YOU MUST USE PYTHON CODE TO CALCULATE AND VERIFY THE TOTALS.
+    1. Write Python code to sum the line items and check against the document total.
+    2. Adjust your extraction if the math does not match.
+    3. AFTER your code execution is finished and verified, output the FINAL JSON result.
+    
+    CRITICAL: The final JSON MUST include the full "orders" list with all extracted items.
+    Do NOT output only a summary or just the totals. We need the COMPLETE JSON object.
+    
+    
+    IMPORTANT: Since code execution is enabled, you must output the JSON result in a markdown block.
+    
+    You MUST strictly follow this JSON schema for your final output:
+    ```json
+    {json.dumps(pdf_response_schema, indent=2)}
+    ```
+    
     """
+        # Enable Code Execution for retries (and disable schema to avoid conflict)
+        current_tools = [types.Tool(code_execution=types.ToolCodeExecution())]
+        current_schema = None 
+    else:
+        # Normal run: Use Schema for safety
+        current_tools = None
+        current_schema = pdf_response_schema
 
-    print("Sending request to Gemini 2.5 Flash...")
+    print("Sending request to Gemini...")
     # NOTE: Removed try/except block here. Let exceptions bubble up to the caller
     # so they can be properly logged to the file (listener.log).
     
-    response = _client.models.generate_content(
-        model="gemini-2.5-flash",
+    # Use a more powerful model for retries
+    model_name = "gemini-2.5-pro" if retry_count > 0 else "gemini-2.5-flash"
+    print(f"Using model: {model_name}")
+
+    response = generate_content_safe(
+        model=model_name,
         contents=[
             types.Content(
                 role="user",
@@ -442,65 +720,136 @@ def process_invoice(file_path: str, mime_type: str = None, email_context: str = 
             )
         ],
         config=types.GenerateContentConfig(
-            response_mime_type="application/json",
+            response_mime_type="application/json" if current_schema else "text/plain",
+            response_schema=current_schema,
+            tools=current_tools,
             temperature=0.0
         )
     )
 
     raw_json = response.text
-    # Cleanup
+    
+    # If using Code Execution (retry), we need to extract the JSON from the text response
+    if retry_count > 0:
+        # Look for JSON block
+        if "```json" in raw_json:
+            try:
+                # Extract content between ```json and ```
+                raw_json = raw_json.split("```json")[1].split("```")[0].strip()
+            except IndexError:
+                print("Warning: Failed to extract JSON from code execution response. Using raw text.")
+        else:
+             # Try simple clean in case it just outputted raw json
+             raw_json = raw_json.replace("```json", "").replace("```", "").strip()
+
+    # Cleanup (Standard)
     raw_json = raw_json.replace("```json", "").replace("```", "").strip()
 
-    # --- DEBUG: Log Response ---
-    # TODO: Remove this after debugging
-    print(f"DEBUG_RAW_JSON_START\n{raw_json}\nDEBUG_RAW_JSON_END")
-    # ---------------------------
+    # Log structured JSON for Cloud Run
+    try:
+        parsed_json = json.loads(raw_json)
+        # detailed log with event info
+        log_payload = {
+            "severity": "INFO", 
+            "message": "AI Model Response (Phase 2)",
+            "event_type": "ai_response",
+            "json_payload": parsed_json
+        }
+        print(json.dumps(log_payload))
+    except json.JSONDecodeError:
+        # Fallback if AI returns invalid JSON
+        log_payload = {
+            "severity": "ERROR",
+            "message": "AI Model Response (Phase 2) - Parse Error",
+            "event_type": "ai_response_error",
+            "raw_payload": raw_json
+        }
+        print(json.dumps(log_payload))
 
     print("Gemini response received. Validating...")
-    order = ExtractedOrder.model_validate_json(raw_json)
+    multi_order = MultiOrderResponse.model_validate_json(raw_json)
+    orders = multi_order.orders
     
-    # --- POST-PROCESSING: Handle 11+1 Promotions ---
-    print("Running post-processing for promotions...")
-    order = post_process_promotions(order)
+    validated_orders = []
     
-    # Filter out lines with 0 quantity (artifacts from relaxed validation)
-    original_count = len(order.line_items)
-    order.line_items = [item for item in order.line_items if (item.quantity or 0) > 0]
-    filtered_count = len(order.line_items)
-    
-    if original_count != filtered_count:
-        print(f"Filtered out {original_count - filtered_count} lines with 0 quantity.")
-    
-    print(f"Success! Extracted {len(order.line_items)} line items from supplier.")
-    
-    # --- VALIDATION: Check Totals ---
-    print("Validating order totals...")
-    is_valid, calc_total, diff = validate_order_totals(order)
-    
-    if not is_valid:
-        warning_msg = (
-            f"Validation Failed: Document Total ({order.document_total_with_vat:.2f}) "
-            f"!= Calculated Total ({calc_total:.2f}). Diff: {diff:.2f}"
-        )
-        print(f"❌ {warning_msg}")
+    for order in orders:
+        # --- POST-PROCESSING: Handle 11+1 Promotions ---
+        print(f"Running post-processing for promotions on order {order.invoice_number}...")
+        order = post_process_promotions(order)
         
-        # RETRY if we haven't already
-        if retry_count < 1:
-            print("Triggering RETRY with feedback to AI...")
-            return process_invoice(
-                file_path, 
-                mime_type, 
-                email_context, 
-                supplier_instructions, 
-                retry_count=retry_count + 1
+        # Filter out lines with 0 quantity (artifacts from relaxed validation)
+        original_count = len(order.line_items)
+        order.line_items = [item for item in order.line_items if (item.quantity or 0) > 0]
+        filtered_count = len(order.line_items)
+        
+        if original_count != filtered_count:
+            print(f"Filtered out {original_count - filtered_count} lines with 0 quantity.")
+        
+        print(f"Success! Extracted {len(order.line_items)} line items from supplier.")
+        
+        # --- VALIDATION: Check Totals ---
+        print(f"Validating order totals for {order.invoice_number}...")
+        is_valid, calc_total, diff = validate_order_totals(order)
+        
+        if not is_valid:
+            warning_msg = (
+                f"Validation Failed: Document Total ({order.document_total_with_vat:.2f}) "
+                f"!= Calculated Total ({calc_total:.2f}). Diff: {diff:.2f}"
             )
-        else:
-            # Final failure after retry - add warning to order
-            print("Max retries reached. Adding warning to order.")
+            print(f"❌ {warning_msg}")
+            
+            # Final failure after retry (or first attempt if we didn't retry yet) - add warning to order
+            # Note: Retrying multi-orders is slightly more complex, so for now we just log warnings
+            # unless it's a critical total mismatch that triggers a whole-file retry.
             order.warnings.append(warning_msg)
             order.warnings.append(f"Calculated from lines: {calc_total:.2f} (VAT {VAT_RATE*100}%)")
+        else:
+            print(f"✅ Validation Passed! Diff: {diff:.2f} (Tolerance: {VALIDATION_TOLERANCE})")
+
+        # --- VALIDATION: Check Quantities ---
+        print(f"Validating order quantities for {order.invoice_number}...")
+        is_valid_qty, calc_qty, diff_qty = validate_order_quantity(order)
+        if not is_valid_qty:
+            qty_warning = f"Quantity Validation Failed: Document Qty ({order.document_total_quantity}) != Sum ({calc_qty}). Diff: {diff_qty:.2f}"
+            print(f"⚠️ {qty_warning}")
+            order.warnings.append(qty_warning)
+        else:
+            print(f"✅ Quantity Validation Passed! Diff: {diff_qty:.2f}")
+
+        validated_orders.append(order)
+
+    # Global retry logic: If ANY order failed critical validation AND we have retries left
+    # we retry the entire document extraction.
+    critical_failure_found = any(
+        "Validation Failed: Document Total" in w 
+        for order in validated_orders 
+        for w in order.warnings
+    )
+    
+    if critical_failure_found and retry_count < MAX_RETRIES:
+        print(f"⚠️ Critical validation failed for one or more orders. Retrying full extraction... (Attempt {retry_count + 1}/{MAX_RETRIES})")
+        return process_invoice(
+            file_path, 
+            mime_type, 
+            email_context, 
+            supplier_instructions, 
+            retry_count=retry_count + 1
+        )
+    
+    return validated_orders
+    
+    if not is_valid_qty:
+        warning_msg = (
+            f"Quantity Validation Failed: Document Total ({order.document_total_quantity}) "
+            f"!= Calculated Total ({calc_qty}). Diff: {diff_qty}"
+        )
+        print(f"❌ {warning_msg}")
+        # We append warning but DO NOT RETRY for quantity mismatch as it's less critical than price
+        # and often caused by "11+1" logic or unit differences (kg vs units)
+        order.warnings.append(warning_msg)
     else:
-        print(f"✅ Validation Passed! Diff: {diff:.2f} (Tolerance: {VALIDATION_TOLERANCE})")
+        if order.document_total_quantity:
+            print(f"✅ Quantity Validation Passed! Diff: {diff_qty}")
 
     return order
 

@@ -1,11 +1,11 @@
 # Super Order Automation
 
-Complete automation pipeline for handling store orders, invoices, and supplier management. This system ingests emails (PDFs/Excels) from suppliers, extracts line-item data using Google Gemini 1.5 Pro, and provides a Streamlit dashboard for review and export.
+Complete automation pipeline for handling store orders, invoices, and supplier management. This system ingests emails (PDFs/Excels) from suppliers, extracts line-item data using Google Gemini model, and provides a Streamlit dashboard for review and export.
 
 ## Features
 
 *   **Automated Ingestion**: Monitors Gmail for new orders and saves attachments to Google Cloud Storage.
-*   **AI Extraction**: Uses Vertex AI (Gemini 1.5 Pro) to parse complex invoices (PDF, Images) and Extract line items, prices, and discounts.
+*   **AI Extraction**: Uses Vertex AI (Gemini model) to parse complex invoices (PDF, Images) and Extract line items, prices, and discounts.
 *   **Validation Logic**: Auto-validates extracted data (sanity checks on prices, VAT calculations, and discounts).
 *   **Interactive Dashboard**: Streamlit-based UI to:
     *   Review and edit extracted orders.
