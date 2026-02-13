@@ -145,50 +145,7 @@ super-order-automation/
 └── README.md
 ```
 
-### Pydantic Schema Design
 
-Handles the complex financial logic (Gross vs Net, VAT status, hidden discounts). See `src/shared/models.py`.
-
-```python
-class VatStatus(StrEnum):
-    INCLUDED = "INCLUDED"
-    EXCLUDED = "EXCLUDED"
-    EXEMPT = "EXEMPT"
-
-class LineItem(BaseModel):
-    barcode: Optional[str]
-    description: str
-    quantity: float
-    
-    # Financials
-    raw_unit_price: float
-    vat_status: VatStatus
-    discount_percentage: float
-    
-    # Promotion handling
-    paid_quantity: Optional[float]
-    bonus_quantity: Optional[float]
-    
-    # Calculated fields
-    final_net_price: float
-
-class ExtractedOrder(BaseModel):
-    invoice_number: Optional[str]
-    date: str
-    currency: str = "USD"
-    
-    # Supplier identification
-    supplier_name: Optional[str]
-    supplier_code: Optional[str]
-    supplier_global_id: Optional[str]
-    
-    # Discounts
-    global_discount_percentage: Optional[float]
-    total_invoice_discount_amount: float
-    
-    line_items: List[LineItem]
-    warnings: List[str]
-```
 
 ### Supplier Profile System
 
