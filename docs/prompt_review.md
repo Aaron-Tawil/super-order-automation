@@ -17,7 +17,7 @@ The prompt asks the LLM to perform complex calculations (line discounts, global 
 - **Risk:** LLMs can make arithmetic errors.
 - **Recommendation:** 
     - **Option A:** Extract raw values (`raw_unit_price`, `discount_percentage`, etc.) and perform the final price calculation in Python.
-    - **Option B (Recommended):** Enable `code_execution` on the **first attempt**, not just the retry, to allow the model to use Python for the "MANDATORY MATH SELF-CHECK".
+    
 
 
 

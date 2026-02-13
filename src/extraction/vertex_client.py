@@ -20,6 +20,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'
 
 from src.shared.models import ExtractedOrder, MultiOrderResponse
 from src.shared.constants import VAT_RATE, VALIDATION_TOLERANCE, MAX_RETRIES
+from src.extraction.schemas import single_order_schema, pdf_response_schema
+from src.extraction.prompts import get_supplier_detection_prompt, get_invoice_extraction_prompt
 
 # Emails to exclude from supplier detection context
 # Emails to exclude from supplier detection context
@@ -374,34 +376,7 @@ def detect_supplier(
             except:
                 print(f"Warning: Unknown file type for Phase 1: {invoice_mime_type}")
     
-    prompt = f"""
-You are an expert at identifying suppliers from email communications and invoices.
-
-TASK: Analyze the email body and invoice below, then match to a supplier from our database.
-
-EMAIL BODY:
-{filtered_email}
-
-{invoice_context}
-
-SUPPLIER DATABASE (CSV format):
-{suppliers_csv}
-
-INSTRUCTIONS:
-1. Look for supplier identifiers in BOTH the email AND invoice:
-- Business ID (עוסק/ח"פ) - usually a 9-digit number *Prioritize this.*
-   - Company name (fuzzy match).
-   - Phone number
-   - Email address
-   - Logo or letterhead text
-2. Match these identifiers to the supplier database.
-3. The supplier "קוד" (code) column is what you need to return.
-4. Prioritize matches from the invoice over email if there's a conflict.
-5. If you find a clear match, return the supplier code.
-6. If you cannot find a confident match, return "UNKNOWN".
-
-Output must strictly follow the defined schema.
-"""
+    prompt = get_supplier_detection_prompt(filtered_email, invoice_context, suppliers_csv)
     
     # Add text prompt
     content_parts.append(types.Part.from_text(text=prompt))
@@ -554,142 +529,19 @@ def process_invoice(file_path: str, mime_type: str = None, email_context: str = 
         # Default: Send as raw bytes (PDF, Image)
         file_part = types.Part.from_bytes(data=file_content, mime_type=mime_type)
 
-    prompt_text = ""
-    if email_context:
-        prompt_text += f"""
-    CONTEXT FROM EMAIL BODY:
-    {email_context}
-    
-    """
-
-    prompt_text += """
-    You are an expert data extraction assistant for an Accounting team.
-    Extract the invoice details from this document into the required JSON format.
-    
-    IMPORTANT: A single document may contain MULTIPLE separate orders/invoices. 
-    You MUST extract EACH order separately as its own object in the 'orders' list.
-    
-    CRITICAL INSTRUCTIONS:
-    1. EXTRACT EVERY SINGLE LINE ITEM. Do not summarize.
-    2. REPEATING ITEMS: If the same product appears in multiple rows (e.g., 11 units on one line, 1 unit on the next), EXTRACT BOTH ROWS SEPARATELY. Do not combine them yourself. and if the price is zero in one row leave it as zero.
-    3. 'vat_status': Check if the column headers say "Price inc. VAT" (INCLUDED) or "Price exc. VAT" (EXCLUDED). default to EXCLUDED.
-    4. GLOBAL DISCOUNT: Look for a discount at the BOTTOM of the invoice that applies to ALL items.
-       - This may appear as "הנחה כללית", "הנחה", "discount", or a percentage like "15.25%".
-       - Extract this as 'global_discount_percentage' (e.g., 10 for 10% off).
-       - The 'final_net_price' for EACH line item must include this global discount!
-    5. 'final_net_price' CALCULATION:
-       - Start with 'raw_unit_price'.
-       - Apply 'discount_percentage' (line level).
-       - Apply 'global_discount_percentage' (invoice level).
-       - VAT ADJUSTMENT:
-         * If 'vat_status' is "EXCLUDED", do nothing more. default to EXCLUDED.
-         * If 'vat_status' is "INCLUDED", divide by (1 + vat_rate/100).
-           -> CRITICAL EXCEPTION: If 'global_discount_percentage' is between 15.1% and 15.5% (e.g. 15.25%), this discount IS the VAT removal. TREAT THIS AS ALREADY EXCLUDING VAT. Do NOT divide by (1 + vat_rate/100) again.
-    6. 'document_total_with_vat': Extract the FINAL TOTAL amount at the bottom of the invoice (סה"כ לתשלום).
-    7. 'vat_rate': If VAT rate is stated (18%, etc.), extract the number. Default to {VAT_RATE * 100}.
-    8. 'document_total_quantity': Extract the TOTAL QUANTITY of items if stated at the bottom of the invoice (סה"כ כמות / פריטים).
-
-    *** MANDATORY MATH SELF-CHECK ***
-    Before finalizing the JSON, you MUST perform this internal calculation:
-    1. For each line item: line_total = quantity * final_net_price
-    2. Sum all line_total values.
-    3. Apply VAT: grand_total = total_sum * (1 + vat_rate/100)
-    4. Compare grand_total to the 'document_total_with_vat'.
-    5. If they don't match (within 1.0) you have made a calculation or extraction error. 
-       - RE-CHECK the quantities, unit prices, and discounts.
-       - Ensure you converted 'INCLUDED' VAT prices to 'EXCLUDED' correctly.
-    
-    *** IMPORTANT: BARCODE EXTRACTION ***
-    - You must find the column that contains the INTERNATIONAL BARCODE (EAN/GTIN).
-    - These are typically 13-digit numbers (e.g., 7290000000000).
-    - START by looking for a column with long numeric strings (12-14 digits).
-    - DO NOT extract internal supplier codes (usually short, 3-6 digits) as the barcode.
-    - If the product has multiple codes, ALWAYS PREFER THE LONGER 13-DIGIT SEQUENCE.
-    - If no valid 12-14 digit barcode column exists, return null for the barcode field. Do NOT use internal codes (3-5 digits) or phone numbers as barcodes.
-    
-    Output must strictly follow the defined schema.
-    """
-
-    # Add supplier-specific instructions AFTER general instructions with PRIORITY
-    if supplier_instructions:
-        prompt_text += f"""
-    
-    ⚠️ SUPPLIER-SPECIFIC OVERRIDES (HIGHEST PRIORITY):
-    The following instructions are specific to THIS supplier and OVERRIDE any conflicting rules above.
-    If there is any conflict between the general instructions above and the supplier-specific instructions below,
-    ALWAYS follow the supplier-specific instructions.
-    
-    {supplier_instructions}
-    """
+    prompt_text = get_invoice_extraction_prompt(
+        email_context=email_context,
+        supplier_instructions=supplier_instructions,
+        version="v1",
+        enable_code_execution=(retry_count > 0)
+    )
     
     # RETRY LOGIC: Add feedback if this is a retry
     current_tools = None
     current_schema = None
-    
-    # Define Schema for JSON Enforcement (Phase 2)
-    single_order_schema = {
-        "type": "OBJECT",
-        "properties": {
-            "invoice_number": {"type": "STRING", "nullable": True},
-            "global_discount_percentage": {"type": "NUMBER", "nullable": True},
-            "total_invoice_discount_amount": {"type": "NUMBER", "nullable": True},
-            "document_total_with_vat": {"type": "NUMBER", "nullable": True},
-            "document_total_quantity": {"type": "NUMBER", "nullable": True},
-            "vat_rate": {"type": "NUMBER", "nullable": True},
-            "line_items": {
-                "type": "ARRAY",
-                "items": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "barcode": {"type": "STRING", "nullable": True},
-                        "description": {"type": "STRING"},
-                        "quantity": {"type": "NUMBER", "nullable": True},
-                        "raw_unit_price": {"type": "NUMBER", "nullable": True},
-                        "vat_status": {"type": "STRING", "enum": ["INCLUDED", "EXCLUDED", "EXEMPT"]},
-                        "discount_percentage": {"type": "NUMBER", "nullable": True},
-                        "final_net_price": {"type": "NUMBER", "nullable": True}
-                    },
-                    "required": ["description", "vat_status"]
-                }
-            }
-        },
-        "required": ["line_items"]
-    }
-
-    pdf_response_schema = {
-        "type": "OBJECT",
-        "properties": {
-            "orders": {
-                "type": "ARRAY",
-                "items": single_order_schema
-            }
-        },
-        "required": ["orders"]
-    }
 
     if retry_count > 0:
         print(f"⚠️ RETRY ATTEMPT {retry_count}: Adding feedback and ENABLING CODE EXECUTION.")
-        prompt_text += f"""
-    
-    ⚠️ PREVIOUS ATTEMPT FAILED validation of totals.
-    
-    YOU MUST USE PYTHON CODE TO CALCULATE AND VERIFY THE TOTALS.
-    1. Write Python code to sum the line items and check against the document total.
-    2. Adjust your extraction if the math does not match.
-    3. AFTER your code execution is finished and verified, output the FINAL JSON result.
-    
-    CRITICAL: The final JSON MUST include the full "orders" list with all extracted items.
-    Do NOT output only a summary or just the totals. We need the COMPLETE JSON object.
-    
-    
-    IMPORTANT: Since code execution is enabled, you must output the JSON result in a markdown block.
-    
-    You MUST strictly follow this JSON schema for your final output:
-    ```json
-    {json.dumps(pdf_response_schema, indent=2)}
-    ```
-    
-    """
         # Enable Code Execution for retries (and disable schema to avoid conflict)
         current_tools = [types.Tool(code_execution=types.ToolCodeExecution())]
         current_schema = None 
