@@ -55,6 +55,8 @@ def get_invoice_extraction_prompt(
     
     if version == "v1":
         return _get_invoice_extraction_prompt_v1(email_context, supplier_instructions, enable_code_execution)
+    elif version == "v2":
+        return _get_invoice_extraction_prompt_v2(email_context, supplier_instructions)
     else:
         raise ValueError(f"Unknown prompt version: {version}")
 
@@ -92,7 +94,7 @@ def _get_invoice_extraction_prompt_v1(email_context: str, supplier_instructions:
          * If 'vat_status' is "INCLUDED", divide by (1 + vat_rate/100).
            -> CRITICAL EXCEPTION: If 'global_discount_percentage' is between 15.1% and 15.5% (e.g. 15.25%), this discount IS the VAT removal. TREAT THIS AS ALREADY EXCLUDING VAT. Do NOT divide by (1 + vat_rate/100) again.
     6. 'document_total_with_vat': Extract the FINAL TOTAL amount at the bottom of the invoice (סה"כ לתשלום).
-    7. 'vat_rate': If VAT rate is stated (18%, etc.), extract the number. Default to {VAT_RATE * 100}.
+    7. 'vat_rate': ALWAYS return {VAT_RATE * 100}. Ignore any other VAT rate stated on the document.
     8. 'document_total_quantity': Extract the TOTAL QUANTITY of items if stated at the bottom of the invoice (סה"כ כמות / פריטים).
 
     *** MANDATORY MATH SELF-CHECK ***
@@ -149,6 +151,74 @@ def _get_invoice_extraction_prompt_v1(email_context: str, supplier_instructions:
     {json.dumps(pdf_response_schema, indent=2)}
     ```
     
+    """
+    
+    return prompt_text
+
+
+def _get_invoice_extraction_prompt_v2(email_context: str, supplier_instructions: str) -> str:
+    """
+    Simplified prompt (v2) focusing on RAW DATA EXTRACTION only.
+    No complex math or self-checking requested from the LLM.
+    Calculations will be done in Python post-processing.
+    """
+    prompt_text = ""
+    if email_context:
+        prompt_text += f"""
+    CONTEXT FROM EMAIL BODY:
+    {email_context}
+    
+    """
+
+    prompt_text += f"""
+    You are an expert data extraction assistant for an Accounting team.
+    Your job is to EXTRACT THE RAW DATA EXACTLY AS PRINTED on the document. Do NOT perform ANY calculations.
+    Do NOT convert prices. Do NOT remove VAT. Do NOT adjust values. Just read what is written.
+    
+    IMPORTANT: A single document may contain MULTIPLE separate orders/invoices. 
+    You MUST extract EACH order separately as its own object in the 'orders' list.
+    
+    CRITICAL EXTRACTION RULES:
+    1. EXTRACT EVERY SINGLE LINE ITEM. Do not summarize.
+    2. REPEATING ITEMS: If the same product appears in multiple rows, EXTRACT BOTH ROWS SEPARATELY.
+    3. 'vat_status': Check columns for "Price inc. VAT" / "כולל מע"מ" (INCLUDED) or "Price exc. VAT" / "לפני מע"מ" (EXCLUDED). Default is EXCLUDED.
+       - IMPORTANT: Just REPORT whether the price column includes VAT or not. Do NOT convert the price.
+    4. GLOBAL DISCOUNT: Look for a general discount at the BOTTOM of the invoice (e.g., "הנחה: 15.25%", "הנחה כללית", "discount").
+       - If a PERCENTAGE is shown (e.g., "15.25 %"), extract it into 'global_discount_percentage'.
+       - If a monetary AMOUNT is shown (e.g., "648.35"), extract it into 'total_invoice_discount_amount'.
+       - Extract BOTH if both are shown.
+       - IMPORTANT: If the SUPPLIER-SPECIFIC INSTRUCTIONS below mention a global discount that is NOT
+         explicitly shown on the document, you MUST still set 'global_discount_percentage' accordingly.
+    
+    5. LINE ITEM DETAILS:
+       - 'raw_unit_price': THE EXACT NUMBER in the price/מחיר column. DO NOT divide by VAT, DO NOT apply
+         any discount, DO NOT calculate anything. Just copy the number as printed.
+         Example: if the column says 20.50, return 20.50. NOT 17.37 (which would be 20.50/1.18).
+       - 'discount_percentage': Extract line-level discount percentage if shown (the number in הנחה column).
+       - 'final_net_price': LEAVE NULL. We will calculate this ourselves in post-processing.
+    
+    6. DOCUMENT TOTALS (For Validation):
+       - 'document_total_with_vat': Extract the FINAL TOTAL to pay (סה"כ לתשלום).
+         * EXCEPTION: If you applied a global discount from SUPPLIER-SPECIFIC INSTRUCTIONS that is NOT
+           already reflected in the document total, you MUST recalculate 'document_total_with_vat' by
+           applying that discount to the original total.
+       - 'document_total_quantity': Extract TOTAL QUANTITY ONLY if explicitly printed on the document
+         (e.g., "סה"כ כמות: 510"). If no total quantity line exists, return null. Do NOT sum up quantities yourself.
+       - 'vat_rate': ALWAYS return {VAT_RATE * 100}. Ignore any other VAT rate stated on the document.
+
+    *** IMPORTANT: BARCODE EXTRACTION ***
+    - Look for INTERNATIONAL BARCODE (EAN/GTIN), typically 13 digits.
+    - Prefer 12-14 digit numbers over short internal codes.
+    - If no barcode column exists, return null.
+
+    Output must strictly follow the defined schema.
+    """
+
+    if supplier_instructions:
+        prompt_text += f"""
+    
+    ⚠️ SUPPLIER-SPECIFIC OVERRIDES (HIGHEST PRIORITY):
+    {supplier_instructions}
     """
     
     return prompt_text
