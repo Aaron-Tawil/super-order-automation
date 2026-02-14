@@ -529,12 +529,15 @@ def process_invoice(file_path: str, mime_type: str = None, email_context: str = 
         # Default: Send as raw bytes (PDF, Image)
         file_part = types.Part.from_bytes(data=file_content, mime_type=mime_type)
 
+    # Use v2 (raw extraction) for first attempt, v1 (LLM-calculated) for retries
+    prompt_version = "v2" if retry_count == 0 else "v1"
     prompt_text = get_invoice_extraction_prompt(
         email_context=email_context,
         supplier_instructions=supplier_instructions,
-        version="v1",
+        version=prompt_version,
         enable_code_execution=(retry_count > 0)
     )
+    print(f"Using prompt version: {prompt_version}")
     
     # RETRY LOGIC: Add feedback if this is a retry
     current_tools = None
@@ -623,6 +626,11 @@ def process_invoice(file_path: str, mime_type: str = None, email_context: str = 
     validated_orders = []
     
     for order in orders:
+        # --- POST-PROCESSING: v2 net price calculation (only on first attempt) ---
+        if retry_count == 0:
+            print(f"Running v2 post-processing (calculating net prices) for order {order.invoice_number}...")
+            order = post_process_v2_net_prices(order)
+        
         # --- POST-PROCESSING: Handle 11+1 Promotions ---
         print(f"Running post-processing for promotions on order {order.invoice_number}...")
         order = post_process_promotions(order)
@@ -702,6 +710,54 @@ def process_invoice(file_path: str, mime_type: str = None, email_context: str = 
             print(f"✅ Quantity Validation Passed! Diff: {diff_qty}")
 
     return order
+
+def calculate_final_net_price(raw_unit_price: float, discount_pct: float, global_discount_pct: float, vat_status: str, vat_rate: float) -> float:
+    """
+    Calculate final_net_price from raw extracted values (Python-side).
+    Steps:
+      1. Start with raw_unit_price (the exact price printed on the document)
+      2. Apply line-level discount percentage
+      3. Apply global/invoice-level discount percentage
+      4. If VAT is INCLUDED in the price, divide it out
+    """
+    price = raw_unit_price or 0.0
+    
+    # 1. Apply line-level discount
+    if discount_pct:
+        price *= (1 - discount_pct / 100)
+    
+    # 2. Apply global discount
+    if global_discount_pct:
+        price *= (1 - global_discount_pct / 100)
+    
+    # 3. Remove VAT if prices are VAT-inclusive
+    if vat_status == "INCLUDED":
+        price /= (1 + vat_rate / 100)
+    
+    return round(price, 4)
+
+
+def post_process_v2_net_prices(order: ExtractedOrder) -> ExtractedOrder:
+    """
+    For v2 prompt responses: calculate final_net_price for each line item
+    since the LLM was instructed to leave it null.
+    """
+    global_discount_pct = order.global_discount_percentage or 0.0
+    vat_rate = order.vat_rate or (VAT_RATE * 100)
+    
+    for item in order.line_items:
+        # Only calculate if the LLM left it null/zero (v2 behavior)
+        if not item.final_net_price or item.final_net_price == 0.0:
+            item.final_net_price = calculate_final_net_price(
+                item.raw_unit_price,
+                item.discount_percentage,
+                global_discount_pct,
+                item.vat_status.value,
+                vat_rate
+            )
+    
+    return order
+
 
 def post_process_promotions(order: ExtractedOrder) -> ExtractedOrder:
     """

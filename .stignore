@@ -1,7 +1,5 @@
-__pycache__
+pycache
 .venv
 .git
 node_modules/
 venv/
-.venv/
-__pycache__/
