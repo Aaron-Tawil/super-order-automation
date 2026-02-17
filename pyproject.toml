@@ -1,0 +1,77 @@
+[project]
+name = "super-order-automation"
+version = "1.0.0"
+description = "Automated invoice order extraction using Vertex AI / Gemini"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # Core
+    "google-genai>=1.0.0",
+    "pydantic>=2.0.0",
+    "python-dotenv",
+    "tenacity>=8.2.0",
+    # Gmail Integration
+    "google-auth-oauthlib",
+    "google-api-python-client",
+    # Web UI
+    "streamlit",
+    "pandas",
+    "openpyxl",
+    "requests",
+    "fastapi",
+    "uvicorn",
+    # String Matching
+    "rapidfuzz>=3.0.0",
+    # GCP Services
+    "google-cloud-storage",
+    "google-cloud-firestore",
+    "google-cloud-logging",
+    "google-cloud-pubsub",
+    # Cloud Functions
+    "functions-framework",
+    "pydantic-settings>=2.12.0",
+    "python-json-logger>=4.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9.0",
+    "pre-commit>=4.0.0",
+    "pytest>=8.0.0",
+    "pytest-mock>=3.0.0",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+# Start relaxed — only catch real bugs and obvious issues
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes (unused imports, undefined names, etc.)
+    "I",    # isort (import ordering)
+    "UP",   # pyupgrade (modern Python syntax)
+    "B",    # flake8-bugbear (common bugs)
+]
+ignore = [
+    "E501",   # line too long (let formatter handle it)
+    "E402",   # module-level import not at top (we use sys.path hacks)
+    "F401",   # unused import (too noisy during refactoring)
+    "B008",   # do not perform function call in argument defaults (FastAPI depends on this)
+    "UP035",  # deprecated typing imports (List, Dict, Tuple) — will modernize gradually
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/shared/price_utils.py" = ["F811", "F841"]  # Intentional: v2 replaces v1 function
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

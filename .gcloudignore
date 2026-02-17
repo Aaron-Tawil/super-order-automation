@@ -2,24 +2,32 @@
 .git
 .gitignore
 .venv
+venv
 __pycache__
 *.pyc
+
+# Local secrets & data
 .env
+env.yaml
+deploy_env.yaml
+token.json
+token.pickle
+credentials.json
+data-excel/
+tests-data/
 
 # Dev/test files
 test_serverless.py
 run_mvp.py
 *.log
+tests/
+.pytest_cache/
+.pre-commit-config.yaml
+uv.lock
+pyproject.toml
 
 # Example files (not needed in production)
 example/
-
-# Local artifacts
-
-# Test & Data Directories
-tests/
-tests-data/
-data-excel/
 
 # Agent & Bot Artifacts
 .agent/
@@ -34,4 +42,3 @@ docs/
 scripts/
 deploy.py
 deploy_ui.py
-cloudbuild.yaml

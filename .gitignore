@@ -13,3 +13,6 @@ deploy_env.yaml
 .vscode/
 data-excel/
 tests-data/
+
+.gemini/
+gha-creds-*.json

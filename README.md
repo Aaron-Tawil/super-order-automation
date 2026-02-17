@@ -5,59 +5,11 @@ Complete automation pipeline for handling store orders, invoices, and supplier m
 ## Features
 
 *   **Automated Ingestion**: Monitors Gmail for new orders and saves attachments to Google Cloud Storage.
+*   **Asynchronous Pipeline**: Decouples email handling from AI processing using Pub/Sub for high reliability and retries.
 *   **AI Extraction**: Uses Vertex AI (Gemini model) to parse complex invoices (PDF, Images) and Extract line items, prices, and discounts.
 *   **Validation Logic**: Auto-validates extracted data (sanity checks on prices, VAT calculations, and discounts).
-*   **Interactive Dashboard**: Streamlit-based UI to:
-    *   Review and edit extracted orders.
-    *   Manage suppliers (custom names, codes, contacts).
-    *   Manage product items (barcodes, descriptions).
+*   **Interactive Dashboard**: Streamlit-based UI to review orders, manage suppliers, and barcodes.
 *   **Export**: Generates valid Excel files ready for ERP import.
-
-## Project Structure
-
-```text
-super-order-automation/
-├── src/
-│   ├── ingestion/       # Cloud Functions for Gmail watching & file saving
-│   ├── extraction/      # Vertex AI Gemini client & prompts
-│   ├── dashboard/       # Streamlit Web UI (Order Review, Supplier/Item Mgmt)
-│   ├── data/            # Firestore logic (Items, Suppliers)
-│   ├── export/          # Excel generation logic
-│   └── shared/          # Pydantic models & logging
-├── scripts/             # Utility scripts
-├── deploy.py            # Deployment script for Order Bot (Backend)
-├── deploy_ui.py         # Deployment script for Dashboard (Frontend)
-└── DESIGN.md            # Detailed architecture documentation
-```
-
-## Quick Start / Deployment
-
-This project relies on Google Cloud Platform services (Cloud Functions, Cloud Run, Firestore, Vertex AI).
-
-### 1. Backend (Order Bot)
-Deploy the email ingestion and extraction logic:
-```bash
-python deploy.py
-```
-
-### 2. Frontend (Dashboard)
-Deploy the Streamlit UI to Cloud Run:
-```bash
-python deploy_ui.py
-```
-
-See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed environment setup and troubleshooting.
-
-## Local Development
-
-1.  **Install dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-2.  **Run Dashboard locally**:
-    ```bash
-    streamlit run src/dashboard/app.py
-    ```
 
 ## Architecture & Design
 
@@ -72,78 +24,85 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed environment setup and troublesho
                                             v
                                    +--------+--------+
                                    |  Cloud Function |
-                                   |   (Ingestion)   | <-------+
-                                   +--------+--------+         |
-                                            |                  |
-                                            | Save Raw File    |
-                                            v                  |
-                                   +--------+--------+         |
-                                   |  Cloud Storage  |         |
-                                   |  (Raw Bucket)   |         |
-                                   +--------+--------+         |
-                                            |                  |
-                                            v                  |
-                                   +--------+--------+         |
-                                   |  Cloud Function |         |
-                                   |   (Extraction)  |         |
-                                   +--------+--------+         |
-                                            |                  |
-                                     Vertex AI (Gemini)        |
-                                            |                  |
-                                            v                  |
-                                   +--------+--------+         |
-                                   |    Firestore    |         |
-                                   |  (Order State)  |         |
-                                   +--------+--------+         |
-                                            ^                  |
-                                            |                  |
-                                   +--------+--------+         |
-                                   |    Cloud Run    |         |
-                                   |   (Streamlit)   | <-------+
-                                   +-----------------+
-                                            |
-                                            v
+                                   |   (order-bot)   | 
                                    +--------+--------+
-                                   |  Final Export   |
-                                   | (Excel/ERP API) |
-                                   +-----------------+
+                                     /              \
+                       1. Save File /                \ 2. Publish Event
+                                   v                  v
+                          +--------------+    +-----------------------+
+                          | Cloud Storage|    | Pub/Sub Topic         |
+                          | (Raw Bucket) |    | order-ingestion-topic |
+                          +--------------+    +----------+------------+
+                                                         |
+                                                         v
+                                              +-----------------------+
+                                              | Cloud Function        |
+                                              | (process-order-event) |
+                                              +----------+------------+
+                                                         |
+                                                  Vertex AI (Gemini)
+                                                         |
+                                                         v
+                                              +-----------------------+
+                                              |       Firestore       |
+                                              |     (Order State)     |
+                                              +----------+------------+
+                                                         ^
+                                                         |
+                                              +----------+------------+
+                                              |       Cloud Run       |
+                                              |      (Streamlit)      |
+                                              +----------+------------+
+                                                         |
+                                                         v
+                                              +-----------------------+
+                                              |     Final Export      |
+                                              |    (Excel / ERP)      |
+                                              +-----------------------+
 ```
 
-### Modular Python Folder Structure
+## Project Structure
 
 ```text
 super-order-automation/
 ├── src/
-│   ├── ingestion/
-│   │   ├── main.py              # Cloud Function: Gmail Process
-│   │   ├── email_processor.py   # Email attachment handling logic
-│   │   ├── gcs_writer.py        # Cloud Storage upload logic
-│   │   └── gmail_watch.py       # Gmail push notification setup
-│   ├── extraction/
-│   │   ├── main.py              # Cloud Function: Triggered by GCS upload
-│   │   ├── vertex_client.py     # Vertex AI Client wrapper
-│   │   └── prompts.py           # Gemini system instructions
-│   ├── export/
-│   │   ├── excel_generator.py   # Pandas logic to format final output
-│   │   └── utils.py             # Export helpers
-│   ├── dashboard/
-│   │   ├── app.py               # Streamlit entry point & Main Dashboard
-│   │   ├── supplier_management.py # UI for managing suppliers
-│   │   ├── items_management.py  # UI for managing items/barcodes
-│   │   └── components.py        # UI widgets
-│   ├── data/
-│   │   ├── firestore_client.py  # DB connection
-│   │   ├── supplier_service.py  # Supplier CRUD & caching
-│   │   └── items_db.py          # Items/Product CRUD
-│   └── shared/
-│   │   ├── models.py            # Pydantic Schemas (ExtractedOrder, LineItem)
-│   │   ├── session_store.py     # Session handling using Firestore
-│   │   ├── validation.py        # Data validation rules
-│   │   └── logger.py            # Structured logging
-├── deploy.py                    # Deploy script for Backend
-├── deploy_ui.py                 # Deploy script for Frontend
-└── README.md
+│   ├── ingestion/       # Gmail monitoring, GCS uploads, and Event publishing
+│   ├── functions/       # Cloud Function entry points (process-order-event)
+│   ├── extraction/      # Vertex AI Gemini client & prompts
+│   ├── core/            # Business logic: Processing, Validation, Promotions
+│   ├── dashboard/       # Streamlit Web UI
+│   ├── data/            # Firestore service layers (Items, Suppliers)
+│   ├── export/          # Excel generation logic
+│   └── shared/          # Pydantic models, Config, and Logger
+├── deploy.py            # Deployment script for Backend (Functions + Pub/Sub)
+├── deploy_ui.py         # Deployment script for Dashboard (Cloud Run)
+└── requirements.txt     # Managed via uv
 ```
+
+## Quick Start / Deployment
+
+### 1. Backend (Cloud Functions)
+Deploy the ingestion bot, the processing service, and setup Pub/Sub topics:
+```bash
+uv run python deploy.py
+```
+
+### 2. Frontend (Dashboard)
+Build and deploy the Streamlit UI to Cloud Run:
+```bash
+uv run python deploy_ui.py
+```
+
+## Local Development
+
+1.  **Install dependencies**:
+    ```bash
+    uv sync
+    ```
+2.  **Run Dashboard locally**:
+    ```bash
+    uv run streamlit run src/dashboard/app.py
+    ```
 
 
 

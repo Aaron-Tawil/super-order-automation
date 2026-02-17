@@ -1,12 +1,14 @@
-import sys
-import os
 import json
+import os
+import sys
+
 from pydantic import ValidationError
 
 # Ensure src is in path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.shared.models import ExtractedOrder, LineItem, VatStatus
+
 
 def test_validation_fix():
     print("Testing ExtractedOrder validation with NULL values...")
@@ -40,12 +42,12 @@ def test_validation_fix():
     try:
         order = ExtractedOrder.model_validate_json(raw_json)
         print("[PASS] Validation successful!")
-        
+
         # Check defaults
         bad_item = order.line_items[1]
         print(f"Item 2 Quantity: {bad_item.quantity} (Expected 0.0)")
         print(f"Item 2 Price: {bad_item.raw_unit_price} (Expected 0.0)")
-        
+
         assert bad_item.quantity == 0.0
         assert bad_item.raw_unit_price == 0.0
         assert bad_item.final_net_price == 0.0
@@ -58,6 +60,7 @@ def test_validation_fix():
     except Exception as e:
         print(f"[FAIL] Unexpected Error: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     test_validation_fix()

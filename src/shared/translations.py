@@ -15,7 +15,6 @@ HEBREW_STRINGS = {
     "debug_ai_project": "✅ פרויקט AI: {project_id}",
     "debug_no_creds": "❌ אין הרשאות AI",
     "sidebar_caption": "מצב חיבור",
-
     # --- Dashboard: Upload & Extraction ---
     "upload_label": "בחר קובץ PDF או Excel",
     "btn_extract": "✨ חלץ נתונים",
@@ -32,25 +31,22 @@ HEBREW_STRINGS = {
     "gcs_upload_fail": "לא ניתן היה להעלות לענן (ניסיון חוזר עלול להיכשל): {error}",
     "error_general": "שגיאה: {error}",
     "session_expired": "❌ הפעילות פגה או לא נמצאה. אנא העלה את הקובץ ידנית או בקש קישור חדש.",
-
     # --- Dashboard: Editor ---
     "metric_supplier": "ספק",
     "metric_invoice": "מס' חשבונית",
     "editor_title": "📝 שורות פריטים (ניתן לעריכה)",
     "editor_caption": "ניתן לערוך ערכים ישירות בטבלה למטה. הוסף או הסר שורות לפי הצורך.",
-    
     # Columns
     "col_barcode": "ברקוד",
     "col_description": "תיאור",
     "col_qty": "כמות",
     "col_unit_price": "מחיר יח'",
-    "col_net_price": "סה\"כ נטו",
-    "col_vat": "מע\"מ",
+    "col_net_price": 'סה"כ נטו',
+    "col_vat": 'מע"מ',
     "col_discount": "הנחה %",
     "vat_opt_included": "כולל",
     "vat_opt_excluded": "לא כולל",
     "vat_opt_exempt": "פטור",
-
     # Buttons & Actions
     "btn_download_excel": "📥 הורד אקסל",
     "btn_download_new_items": "📥 הורד אקסל פריטים חדשים",
@@ -62,7 +58,6 @@ HEBREW_STRINGS = {
     "msg_revert_success": "נמחקו {count} פריטים.",
     "msg_revert_fail": "נכשל ביטול הפריטים: {error}",
     "msg_gen_excel_fail": "נכשל ביצירת אקסל: {error}",
-
     # New Items Section
     "new_items_section_title": "📦 פריטים חדשים",
     "new_items_section_caption": "פריטים שנוספו למסד הנתונים בהזמנה זו.",
@@ -71,7 +66,6 @@ HEBREW_STRINGS = {
     "col_barcode2": "ברקוד 2",
     "col_sell_price": "מכירה",
     "col_supplier_code": "מספר ספק",
-
     # --- Dashboard: Retry ---
     "retry_expander": "🛠️ מתקדם: נסה חילוץ מחדש",
     "retry_warning": "⚠️ פעולה זו תריץ מחדש את חילוץ ה-AI על הקובץ המקורי. כל עריכה ידנית למעלה תאבד.",
@@ -84,7 +78,6 @@ HEBREW_STRINGS = {
     "retry_instr_updated": "✅ עודכנו הוראות לספק {code}",
     "retry_success": "חילוץ עודכן!",
     "retry_fail_download": "נכשל בהורדת הקובץ המקורי.",
-
     # --- Supplier Management ---
     "sm_title": "⚙️ ניהול ספקים",
     "sm_subtitle": "צפה, ערוך והוסף ספקים למסד הנתונים.",
@@ -95,60 +88,51 @@ HEBREW_STRINGS = {
     "sm_select_hint": "👈 בחר ספק מהטבלה לעריכה, או לחץ 'הוסף חדש' ליצירה.",
     "sm_search_placeholder": "סינון לפי קוד, שם, ח.פ, או אימייל...",
     "btn_add_new": "➕ הוסף חדש",
-    
     # Table Headers
     "sm_th_code": "קוד",
     "sm_th_name": "שם",
-    "sm_th_global_id": "עוסק/ח\"פ",
+    "sm_th_global_id": 'עוסק/ח"פ',
     "sm_th_phone": "טלפון",
     "sm_th_email": "אימייל",
     "sm_th_instr": "הוראות מיוחדות",
-
     "sm_showing_count": "*מציג {filtered} מתוך {total} ספקים*",
     "sm_table_instr": "💡 סמן את התיבה (checkbox) בשורה כדי לערוך את פרטי הספק",
-    
     # --- Supplier Management: Forms ---
     "form_edit_title": "📝 ערוך ספק: {code}",
     "form_add_title": "➕ הוסף ספק חדש",
-    
     "lbl_code": "קוד ספק *",
     "lbl_name": "שם *",
-    "lbl_global_id": "עוסק/ח\"פ",
+    "lbl_global_id": 'עוסק/ח"פ',
     "lbl_phone": "טלפון",
     "lbl_email": "אימייל",
-    
     "ph_code": "לדוגמה: SUP001 או שם-ספק",
     "ph_name": "שם הספק לתצוגה",
-    "ph_global_id": "מספר עוסק מורשה / ח\"פ",
+    "ph_global_id": 'מספר עוסק מורשה / ח"פ',
     "ph_email": "supplier@example.com",
     "ph_phone": "05x-xxxxxxx",
     "ph_instr": "לדוגמה:\n- מחירים תמיד ללא מע\"מ\n- השתמש בעמודה 'משקל' לכמויות\n- פריטי בונוס מסומנים ב-'*'",
-    
     "lbl_instr_header": "**הוראות חילוץ מיוחדות (אופציונלי):**",
     "lbl_instr_sub": "*הוראות אלו יקבלו עדיפות עליונה בחילוץ חשבוניות ספק זה.*",
-    
     "btn_save": "💾 שמור שינויים",
     "btn_cancel": "❌ ביטול",
     "btn_add_submit": "➕ הוסף ספק",
-    
     "err_req_name": "שם הוא שדה חובה",
     "err_req_code_name": "קוד ושם הם שדות חובה",
-    "err_req_name_global_id": "שם ומספר עוסק/ח\"פ הם שדות חובה",
-    "err_req_code_name_global_id": "קוד, שם ומספר עוסק/ח\"פ הם שדות חובה",
+    "err_req_name_global_id": 'שם ומספר עוסק/ח"פ הם שדות חובה',
+    "err_req_code_name_global_id": 'קוד, שם ומספר עוסק/ח"פ הם שדות חובה',
     "msg_update_success": "✅ ספק {code} עודכן בהצלחה!",
     "err_update_fail": "❌ נכשל בעדכון הספק",
     "msg_add_success": "✅ ספק {code} נוסף בהצלחה!",
     "err_add_fail": "❌ נכשל בהוספת ספק. ייתכן שהקוד כבר קיים.",
     "err_not_found": "ספק {code} לא נמצא",
-
     # --- Email Notifications ---
     "email_greeting": "שלום,",
     "email_processed_intro": "עיבדתי את ההזמנה שלך '{subject}'.",
     "email_attachments": "📎 קבצים מצורפים:",
-    "email_att_original": "   • מסמך מקורי ({filename})",
-    "email_att_extracted": "   • נתונים שחולצו ({count} שורות פריט)",
-    "email_att_supplier": "   • ספק: {name} (קוד: {code})",
-    "email_att_new_items": "   • אקסל פריטים חדשים ({count} פריטים להוספה למערכת)",
+    "email_att_original": "מסמך מקורי ({filename})",
+    "email_att_extracted": "נתונים שחולצו ({count} שורות פריט)",
+    "email_att_supplier": "ספק: {name} (קוד: {code})",
+    "email_att_new_items": "אקסל פריטים חדשים ({count} פריטים להוספה למערכת)",
     "email_warn_phase2": "⚠️ אזהרה: חילוץ שלב 2 לא הצליח לתפוס: {fields}. אנא וודא את החשבונית ידנית.",
     "email_warn_unknown": "⚠️ אזהרה: לא ניתן היה להתאים ספק למסד הנתונים. קוד הספק סומן כ-'UNKNOWN'.",
     "email_warn_barcodes": "⚠️ אזהרה: נמצאו {count} פריטים עם ברקודים לא תקינים (<11 ספרות). אלו **לא** נוספו למערכת.",
@@ -159,10 +143,9 @@ HEBREW_STRINGS = {
     "email_fail_body": "נכשל בחילוץ נתוני ההזמנה.",
     "email_err_subject": "שגיאה בעיבוד ההזמנה",
     "email_err_body_prefix": "שגיאה בחילוץ נתונים: ",
-
     # --- Items Management ---
     "im_title": "📦 ניהול פריטים",
-    "im_header_total_count": "📦 ניהול פריטים (סה\"כ פריטים: {count})",
+    "im_header_total_count": '📦 ניהול פריטים (סה"כ פריטים: {count})',
     "im_tab_search": "🔎 חיפוש ועריכה",
     "im_tab_reset": "⚠️ איפוס מסד נתונים",
     "im_search_label": "חפש לפי ברקוד או שם",
@@ -200,9 +183,6 @@ HEBREW_STRINGS = {
     "im_status_complete": "איפוס מסד הנתונים הושלם!",
     "im_msg_reset_success": "איפוס מסד הנתונים הושלם. נמחקו {old} פריטים ישנים ונוספו {new} פריטים חדשים.",
     "im_err_read_file": "שגיאה בקריאת הקובץ: {error}",
-
-    "lbl_name": "שם", # Explicitly defined to ensure control over asterisks
-
     # Add Items Tab
     "im_tab_add": "➕ הוספת פריטים",
     "im_add_manual_title": "הוספה ידנית",
@@ -214,7 +194,6 @@ HEBREW_STRINGS = {
     "im_msg_add_fail": "שגיאה בהוספת הפריט. בדוק אם הברקוד כבר קיים.",
     "im_batch_upload_label": "העלה קובץ אקסל להוספה (לא מוחק קיים)",
     "im_batch_success": "✅ {count} פריטים נוספו/עודכנו בהצלחה!",
-
     # Delete Items Tab
     "im_tab_delete": "🗑️ מחיקת פריטים",
     "im_del_manual_title": "מחיקה ידנית",
@@ -230,11 +209,12 @@ HEBREW_STRINGS = {
     "im_del_btn_sample": "📥 הורד קובץ דוגמה למחיקה",
 }
 
+
 def get_text(key: str, **kwargs) -> str:
     """
     Retrieve a translated string by key.
     Supports format arguments similarly to f-strings.
-    
+
     Example:
         get_text("phase_1_identified", name="Tnuva", code="TNV")
     """
@@ -242,6 +222,6 @@ def get_text(key: str, **kwargs) -> str:
     if kwargs:
         try:
             return text.format(**kwargs)
-        except KeyError as e:
+        except KeyError:
             return text  # Return unformatted text if key missing, or handle gracefully
     return text
