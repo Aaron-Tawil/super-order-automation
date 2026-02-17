@@ -1,0 +1,40 @@
+# Version control
+.git
+.gitignore
+
+# Virtual environments
+.venv
+venv
+
+# IDE
+.idea/
+.vscode/
+.agent/
+
+# Local data & secrets
+data-excel/
+tests-data/
+token.json
+token.pickle
+credentials.json
+.env
+env.yaml
+deploy_env.yaml
+
+# Python cache
+__pycache__
+*.pyc
+
+# Testing & dev tools
+tests/
+.pytest_cache/
+.pre-commit-config.yaml
+
+# Build artifacts
+*.log
+.DS_Store
+uv.lock
+
+# Documentation
+docs/
+*.md
