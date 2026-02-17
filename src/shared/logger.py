@@ -1,47 +1,64 @@
-import json
 import logging
+import json
 import sys
-
-try:
-    from pythonjsonlogger import jsonlogger
-    HAS_JSON_LOGGER = True
-except ImportError:
-    HAS_JSON_LOGGER = False
-
+import os
 from src.shared.config import settings
+
+# Import Google Cloud Logging
+try:
+    import google.cloud.logging
+    from google.cloud.logging.handlers import StructuredLogHandler
+    HAS_GOOGLE_LOGGING = True
+except ImportError:
+    HAS_GOOGLE_LOGGING = False
 
 
 def setup_logger(name: str) -> logging.Logger:
     """
-    Configures and returns a logger with JSON formatting.
+    Configures and returns a logger.
+    Uses Google Cloud Logging (StructuredLogHandler) when in cloud environment.
     """
     logger = logging.getLogger(name)
 
-    # Check if handlers already exist to avoid duplicate logs
+    # Remove existing handlers (e.g., from functions-framework or other libraries)
+    # to ensure our configuration (StructuredLogHandler) takes precedence.
     if logger.hasHandlers():
-        return logger
+        logger.handlers.clear()
 
+    # Check Environment
+    is_cloud = (
+        settings.ENVIRONMENT.lower() in ("prod", "production", "cloud") 
+        or os.environ.get("K_SERVICE") is not None
+    )
+
+    # Cloud Environment: Use Google Cloud Logging Native Client
+    if is_cloud and HAS_GOOGLE_LOGGING:
+        try:
+            # StructuredLogHandler writes JSON to stdout, which Cloud Functions/Run
+            # agent picks up and parses (setting severity correctly).
+            handler = StructuredLogHandler()
+            logger.addHandler(handler)
+            logger.propagate = False # Prevent duplication to root
+            
+            # Set Level
+            level_str = settings.LOG_LEVEL.upper()
+            level = getattr(logging, level_str, logging.INFO)
+            logger.setLevel(level)
+            
+            return logger
+        except Exception as e:
+            # Fallback if setup fails
+            print(f"Failed to setup Google Cloud Logging: {e}", file=sys.stderr)
+
+    # Local Dev or Fallback: Standard StreamHandler
     handler = logging.StreamHandler(sys.stdout)
-
-    # Use JSON formatting for Cloud environments, simple text for local dev
-    if settings.ENVIRONMENT.lower() in ("prod", "production", "cloud") and HAS_JSON_LOGGER:
-        formatter = jsonlogger.JsonFormatter(
-            "%(asctime)s %(levelname)s %(name)s %(message)s",
-            rename_fields={"levelname": "severity", "asctime": "timestamp"},
-        )
-        # Prevent propagation to root logger (Streamlit/Gunicorn) to avoid duplicate/text logs
-        logger.propagate = False
-    else:
-        # Local Dev or fallback: simpler format
-        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        logger.propagate = True  # Keep default for local dev
-
+    formatter = logging.Formatter("%(asctime)s - [%(levelname)s] - %(name)s - %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
+    logger.propagate = True  # Keep default for local dev
 
-    # Set level from config
+    # Set Level
     level_str = settings.LOG_LEVEL.upper()
-    # Handle cases where level might be invalid
     level = getattr(logging, level_str, logging.INFO)
     logger.setLevel(level)
 

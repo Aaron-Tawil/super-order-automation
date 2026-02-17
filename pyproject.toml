@@ -18,6 +18,7 @@ dependencies = [
     "pandas",
     "openpyxl",
     "requests",
+    "urllib3<2.0.0", # Fix for SSLError in Cloud Functions
     "fastapi",
     "uvicorn",
     # String Matching
@@ -25,12 +26,12 @@ dependencies = [
     # GCP Services
     "google-cloud-storage",
     "google-cloud-firestore",
-    "google-cloud-logging",
+    "google-cloud-logging>=3.0.0",
     "google-cloud-pubsub",
     # Cloud Functions
     "functions-framework",
     "pydantic-settings>=2.12.0",
-    "python-json-logger>=4.0.0",
+    "python-json-logger>=2.0.0",
 ]
 
 [dependency-groups]
