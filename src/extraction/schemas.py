@@ -21,22 +21,17 @@ single_order_schema = {
                     "raw_unit_price": {"type": "NUMBER", "nullable": True},
                     "vat_status": {"type": "STRING", "enum": ["INCLUDED", "EXCLUDED", "EXEMPT"]},
                     "discount_percentage": {"type": "NUMBER", "nullable": True},
-                    "final_net_price": {"type": "NUMBER", "nullable": True}
+                    "final_net_price": {"type": "NUMBER", "nullable": True},
                 },
-                "required": ["description", "vat_status"]
-            }
-        }
+                "required": ["description", "vat_status"],
+            },
+        },
     },
-    "required": ["line_items"]
+    "required": ["line_items"],
 }
 
 pdf_response_schema = {
     "type": "OBJECT",
-    "properties": {
-        "orders": {
-            "type": "ARRAY",
-            "items": single_order_schema
-        }
-    },
-    "required": ["orders"]
+    "properties": {"orders": {"type": "ARRAY", "items": single_order_schema}},
+    "required": ["orders"],
 }

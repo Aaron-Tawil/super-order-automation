@@ -1,6 +1,8 @@
 import json
-from src.shared.constants import VAT_RATE
+
 from src.extraction.schemas import pdf_response_schema
+from src.shared.constants import VAT_RATE
+
 
 def get_supplier_detection_prompt(filtered_email: str, invoice_context: str, suppliers_csv: str) -> str:
     """
@@ -38,21 +40,21 @@ Output must strictly follow the defined schema.
 
 
 def get_invoice_extraction_prompt(
-    email_context: str = None, 
-    supplier_instructions: str = None, 
-    version: str = "v1", 
-    enable_code_execution: bool = False
+    email_context: str = None,
+    supplier_instructions: str = None,
+    version: str = "v1",
+    enable_code_execution: bool = False,
 ) -> str:
     """
     Returns the prompt for Phase 2: Invoice Extraction.
-    
+
     Args:
         email_context: Optional text from the email body.
         supplier_instructions: Optional supplier-specific instructions.
         version: Version of the prompt to use. Default is "v1".
         enable_code_execution: If True, adds instructions for code execution and math verification.
     """
-    
+
     if version == "v1":
         return _get_invoice_extraction_prompt_v1(email_context, supplier_instructions, enable_code_execution)
     elif version == "v2":
@@ -61,7 +63,9 @@ def get_invoice_extraction_prompt(
         raise ValueError(f"Unknown prompt version: {version}")
 
 
-def _get_invoice_extraction_prompt_v1(email_context: str, supplier_instructions: str, enable_code_execution: bool) -> str:
+def _get_invoice_extraction_prompt_v1(
+    email_context: str, supplier_instructions: str, enable_code_execution: bool
+) -> str:
     prompt_text = ""
     if email_context:
         prompt_text += f"""
@@ -129,7 +133,7 @@ def _get_invoice_extraction_prompt_v1(email_context: str, supplier_instructions:
     
     {supplier_instructions}
     """
-    
+
     if enable_code_execution:
         prompt_text += f"""
     
@@ -152,7 +156,7 @@ def _get_invoice_extraction_prompt_v1(email_context: str, supplier_instructions:
     ```
     
     """
-    
+
     return prompt_text
 
 
@@ -220,5 +224,5 @@ def _get_invoice_extraction_prompt_v2(email_context: str, supplier_instructions:
     ⚠️ SUPPLIER-SPECIFIC OVERRIDES (HIGHEST PRIORITY):
     {supplier_instructions}
     """
-    
+
     return prompt_text
