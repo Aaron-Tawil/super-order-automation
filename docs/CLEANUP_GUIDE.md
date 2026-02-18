@@ -1,38 +1,33 @@
-# Cleanup Guide: Artifact Registry & Cloud Run
+# Artifact Cleanup Guide
 
-To clean up stale images and revisions, use the provided script.
+The `scripts/cleanup_artifacts.sh` script helps manage storage costs and clutter by removing old Cloud Run revisions and container images.
 
-## 1. The Script
-Located at: `scripts/cleanup_artifacts.sh`
+## Features
+- **Cloud Run Revisions**: Deletes all **inactive** revisions for:
+    - `order-dashboard` (Cloud Run Service)
+    - `order-bot` (Cloud Function Gen 2)
+    - `process-order-event` (Cloud Function Gen 2)
+    - `renew-watch-orders` (Cloud Function Gen 2)
+- **Container Images**: Keeps only the **latest 5 images** for each service, deleting older ones.
+    - Cleans GCR images (`gcr.io`) for the dashboard.
+    - Cleans Artifact Registry images (`us-central1-docker.pkg.dev`) for Cloud Functions.
 
-### What it does:
-- Lists all **Cloud Run revisions** that are no longer serving traffic and deletes them.
-- Lists all **GCR images** (`gcr.io/super-home-automation/order-dashboard`), keeps the **latest 5**, and deletes the rest.
+## Usage
 
-## 2. Usage
-Run the script from the project root:
+Simply run the script from the project root:
 
 ```bash
 ./scripts/cleanup_artifacts.sh
 ```
 
-## 3. Manual Commands (Reference)
-If you prefer running commands manually:
+## How it Works
 
-### Revisions
-```bash
-# List revisions to review
-gcloud run revisions list --service order-dashboard
+1.  **Revisions**: It lists all revisions for each service. It filters for `status.conditions.type=Active` and `status.conditions.status=False` (meaning inactive/not serving traffic) and deletes them.
+2.  **Images**: It lists all image digests sorted by date. It skips the most recent 5 and deletes the rest.
 
-# Delete a specific revision
-gcloud run revisions delete [REVISION_NAME] --region us-central1
-```
+## Configuration
 
-### Images
-```bash
-# List images by date
-gcloud container images list-tags gcr.io/super-home-automation/order-dashboard --sort-by=~TIMESTAMP
-
-# Delete an image by digest
-gcloud container images delete gcr.io/super-home-automation/order-dashboard@sha256:[DIGEST]
-```
+You can modify the following variables at the top of the script:
+- `PROJECT_ID`: Your Google Cloud Project ID.
+- `REGION`: The region (default: `us-central1`).
+- `KEEP_COUNT`: Number of recent images to keep (default: `5`).
