@@ -565,13 +565,18 @@ def extract_invoice_data(
             json_one_line = raw_json.replace("\n", " ").replace("\r", "")
 
         # Log for cloud logging
-        logger.warning(f"✅ Phase 2 Finished (Model={model_name}). JSON received.")
-        logger.info(f"Phase 2 AI Response (Attempt {retry_count}): {json_one_line}")
+        logger.info(f"✅ Phase 2 Finished (Model={model_name}). JSON received.")
         
         try:
             parsed_json = json.loads(raw_json)
-            # Also log as structured data for advanced filtering
-            logger.info("AI Model Response (Phase 2 - Structured)", extra={"event_type": "ai_response", "json_payload": parsed_json})
+            # Log as structured data for advanced filtering
+            # Note: with StructuredLogHandler, extra fields are added to jsonPayload
+            logger.info("AI Model Response (Phase 2 - Structured)", extra={
+                "json_payload": parsed_json,
+                "event_type": "ai_response",
+                "attempt": retry_count,
+                "model": model_name
+            })
         except json.JSONDecodeError:
             logger.error(f"❌ AI returned invalid JSON: {raw_json[:200]}...")
 
