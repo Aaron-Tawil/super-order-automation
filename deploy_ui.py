@@ -49,7 +49,7 @@ def deploy():
     env_vars["GCP_PROJECT_ID"] = PROJECT_ID
     env_vars["API_URL"] = f"{FUNCTION_URL_BASE}/order-bot"
     env_vars["ENVIRONMENT"] = "cloud"
-    env_vars["LOG_LEVEL"] = "INFO"
+    env_vars["LOG_LEVEL"] = "DEBUG"
 
     # Construct env string for gcloud
     env_string = ",".join(f"{k}={v}" for k, v in env_vars.items())

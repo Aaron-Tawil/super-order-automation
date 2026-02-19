@@ -194,8 +194,8 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
     
     # Force Cloud Environment for structured logging
     env_vars["ENVIRONMENT"] = "cloud"
-    # Force INFO level to ensure all logs appear
-    env_vars["LOG_LEVEL"] = "INFO"
+    # Force DEBUG level to ensure all logs appear (including detailed debug logs)
+    env_vars["LOG_LEVEL"] = "DEBUG"
     
     env_string = ",".join(f"{k}={v}" for k, v in env_vars.items()) if env_vars else ""
 
