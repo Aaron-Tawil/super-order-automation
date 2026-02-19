@@ -2,9 +2,9 @@
 # cleanup_artifacts.sh
 
 # Configuration
-PROJECT_ID="super-home-automation"
-REGION="us-central1"
-KEEP_COUNT=5
+PROJECT_ID=$(echo "super-home-automation" | tr -d '\r')
+REGION=$(echo "us-central1" | tr -d '\r')
+KEEP_COUNT=$(echo 5 | tr -d '\r')
 
 # Defined Services (Cloud Run & Functions)
 # Note: Cloud Functions Gen 2 appear as Cloud Run services
@@ -42,8 +42,14 @@ clean_revisions() {
         local count=$(wc -l < revisions_to_delete.txt)
         echo "Found $count inactive revisions for $SERVICE_NAME."
         # Delete them
-        cat revisions_to_delete.txt | \
-        xargs -I {} gcloud run revisions delete {} --region="$REGION" --project="$PROJECT_ID" --quiet
+        while read -r rev; do
+            # Strip \r for Windows compatibility
+            rev=$(echo "$rev" | tr -d '\r')
+            if [ -n "$rev" ]; then
+                echo "Deleting revision: $rev"
+                gcloud run revisions delete "$rev" --region="$REGION" --project="$PROJECT_ID" --quiet
+            fi
+        done < revisions_to_delete.txt
         echo "Deleted inactive revisions."
     else
         echo "No inactive revisions found."
@@ -67,8 +73,12 @@ clean_gcr_images() {
         local count=$(wc -l < images_to_delete.txt)
         echo "Found $count old images to delete."
         while read -r digest; do
-            echo "Deleting $IMAGE_NAME@$digest ..."
-            gcloud container images delete "$IMAGE_NAME@$digest" --force-delete-tags --quiet
+            # Strip \r for Windows compatibility
+            digest=$(echo "$digest" | tr -d '\r')
+            if [ -n "$digest" ]; then
+                echo "Deleting $IMAGE_NAME@$digest ..."
+                gcloud container images delete "$IMAGE_NAME@$digest" --force-delete-tags --quiet
+            fi
         done < images_to_delete.txt
         echo "Deleted old images."
     else
@@ -98,8 +108,12 @@ clean_ar_images() {
         local count=$(wc -l < images_to_delete.txt)
         echo "Found $count old images to delete."
         while read -r digest; do
-            echo "Deleting $IMAGE_NAME@$digest ..."
-            gcloud artifacts docker images delete "$IMAGE_NAME@$digest" --delete-tags --quiet
+            # Strip \r for Windows compatibility
+            digest=$(echo "$digest" | tr -d '\r')
+            if [ -n "$digest" ]; then
+                echo "Deleting $IMAGE_NAME@$digest ..."
+                gcloud artifacts docker images delete "$IMAGE_NAME@$digest" --delete-tags --quiet
+            fi
         done < images_to_delete.txt
         echo "Deleted old images."
     else
@@ -111,6 +125,8 @@ clean_ar_images() {
 
 # Main Loop
 for SERVICE in "${SERVICES[@]}"; do
+    # Strip \r from service name in case of CRLF
+    SERVICE=$(echo "$SERVICE" | tr -d '\r')
     clean_revisions "$SERVICE"
     
     if [ "$SERVICE" == "order-dashboard" ]; then
