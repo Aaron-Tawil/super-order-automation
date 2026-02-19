@@ -34,6 +34,16 @@ INSTRUCTIONS:
 5. If you find a clear match, return the supplier code.
 6. If you cannot find a confident match, return "UNKNOWN".
 
+7. Extract the SUPPLIER'S EMAIL ADDRESS if found in the document or email body.
+   - Return it in the `detected_email` field.
+   - If multiple emails found, prefer the one in the invoice header or footer.
+   - If no email found, return null.
+
+8. Extract the SUPPLIER'S GLOBAL ID (Tax ID / BN / Osek Murshe / H.P) if found.
+   - Return it in the `detected_id` field.
+   - It usually looks like a 9-digit number.
+   - If not found, return null.
+
 Output must strictly follow the defined schema.
 """
     return prompt

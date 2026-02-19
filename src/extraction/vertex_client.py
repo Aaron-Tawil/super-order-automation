@@ -26,6 +26,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"
 
 from src.extraction.prompts import get_invoice_extraction_prompt, get_supplier_detection_prompt
 from src.extraction.schemas import pdf_response_schema, single_order_schema
+from src.shared.ai_cost import calculate_cost
 
 # Emails to exclude from supplier detection context
 from src.shared.config import settings
@@ -224,6 +225,62 @@ def init_client(project_id: str = None, location: str = None, api_key: str = Non
         logger.error("Error: Must provide either project_id OR api_key.")
 
 
+
+def _extract_response_metadata(response) -> dict:
+    """
+    Extracts comprehensive metadata from the generation response.
+    Includes: Usage, Finish Reason, Safety Ratings, Citations.
+    """
+    metadata = {
+        "usage": {},
+        "finish_reason": "UNKNOWN",
+        "safety_ratings": [],
+        "citation_metadata": None
+    }
+    
+    # 1. Usage Metadata
+    if hasattr(response, "usage_metadata"):
+        raw_usage = response.usage_metadata
+        metadata["usage"] = {
+            "prompt_token_count": getattr(raw_usage, "prompt_token_count", 0),
+            "candidates_token_count": getattr(raw_usage, "candidates_token_count", 0),
+            "total_token_count": getattr(raw_usage, "total_token_count", 0),
+        }
+
+    # 2. Candidate Metadata (Safety, Finish Reason)
+    if response.candidates and len(response.candidates) > 0:
+        candidate = response.candidates[0]
+        
+        # Finish Reason
+        metadata["finish_reason"] = str(getattr(candidate, "finish_reason", "UNKNOWN"))
+        
+        # Safety Ratings
+        if getattr(candidate, "safety_ratings", None):
+            metadata["safety_ratings"] = [
+                {
+                    "category": str(getattr(r, "category", "UNKNOWN")),
+                    "probability": str(getattr(r, "probability", "UNKNOWN")),
+                    "blocked": getattr(r, "blocked", False)
+                }
+                for r in candidate.safety_ratings
+            ]
+            
+        # Citation Metadata
+        if hasattr(candidate, "citation_metadata") and candidate.citation_metadata:
+            cit = candidate.citation_metadata
+            metadata["citation_metadata"] = {
+                "citations": [
+                    {
+                        "start_index": getattr(c, "start_index", 0),
+                        "end_index": getattr(c, "end_index", 0),
+                        "uri": getattr(c, "uri", ""),
+                    }
+                    for c in getattr(cit, "citations", [])
+                ]
+            }
+
+    return metadata
+
 def is_retryable_error(exception):
     """
     Retry on 5xx Server Errors OR 429 Resource Exhausted (Quota) errors.
@@ -262,6 +319,7 @@ def filter_email_context(email_text: str) -> str:
     """
     Filter out excluded emails from the email body text.
     This prevents the LLM from incorrectly identifying internal emails as suppliers.
+    Supports exact email matches AND domain wildcards (e.g. "@superhome.co.il").
 
     Args:
         email_text: Raw email body text
@@ -273,10 +331,26 @@ def filter_email_context(email_text: str) -> str:
         return ""
 
     filtered_text = email_text
-    for excluded_email in EXCLUDED_EMAILS:
-        # Case-insensitive replacement
-        pattern = re.compile(re.escape(excluded_email), re.IGNORECASE)
-        filtered_text = pattern.sub("[FILTERED]", filtered_text)
+    for excluded_entry in EXCLUDED_EMAILS:
+        excluded_entry = excluded_entry.strip()
+        if not excluded_entry:
+            continue
+            
+        if excluded_entry.startswith("@"):
+            # It's a domain wildcard (e.g. @superhome.co.il)
+            # Regex to find any email ending with this domain
+            # \b[A-Za-z0-9._%+-]+@domain\.com\b
+            domain_pattern = re.escape(excluded_entry)
+            # Prepend the user/local part regex
+            full_pattern = r"\b[A-Za-z0-9._%+-]+" + domain_pattern + r"\b"
+            
+            pattern = re.compile(full_pattern, re.IGNORECASE)
+            filtered_text = pattern.sub("[FILTERED_DOMAIN]", filtered_text)
+        else:
+            # Exact match
+            # Case-insensitive replacement
+            pattern = re.compile(re.escape(excluded_entry), re.IGNORECASE)
+            filtered_text = pattern.sub("[FILTERED]", filtered_text)
 
     return filtered_text
 
@@ -318,13 +392,13 @@ def detect_supplier(
         suppliers_csv: Optional pre-loaded supplier CSV. If None, loads from SupplierService.
 
     Returns:
-        Tuple of (supplier_code, confidence_score)
+        Tuple of (supplier_code, confidence_score, cost, usage_metadata, result_dict, detected_email, detected_id)
         supplier_code is "UNKNOWN" if no match found
     """
     global _client
     if not _client:
         logger.error("Client not initialized. Call init_client() first.")
-        return ("UNKNOWN", 0.0)
+        return ("UNKNOWN", 0.0, 0.0, {}, {})
 
     # Filter excluded emails from context
     filtered_email = filter_email_context(email_body)
@@ -343,7 +417,7 @@ def detect_supplier(
 
     if not suppliers_csv:
         logger.warning("Warning: No supplier data available for matching")
-        return ("UNKNOWN", 0.0)
+        return ("UNKNOWN", 0.0, 0.0, {}, {})
 
     # Build content parts for the LLM
     content_parts = []
@@ -403,6 +477,8 @@ def detect_supplier(
                         "supplier_code": {"type": "STRING"},
                         "confidence": {"type": "NUMBER"},
                         "reasoning": {"type": "STRING"},
+                        "detected_email": {"type": "STRING", "nullable": True},
+                        "detected_id": {"type": "STRING", "nullable": True},
                     },
                     "required": ["supplier_code", "confidence", "reasoning"],
                 },
@@ -416,15 +492,30 @@ def detect_supplier(
         supplier_code = result.get("supplier_code", "UNKNOWN")
         confidence = result.get("confidence", 0.0)
         reasoning = result.get("reasoning", "")
+        detected_email = result.get("detected_email")
+        detected_id = result.get("detected_id")
 
-        logger.warning(f"Phase 1 Finished: Model={model_name}, Supplier={supplier_code}, Confidence={confidence:.2f}")
+        # Calculate Cost
+        usage_metadata = {}
+        cost = 0.0
+        try:
+            # Extract full metadata
+            response_metadata = _extract_response_metadata(response)
+            usage_metadata = response_metadata.get("usage", {})
+            cost = calculate_cost(model_name, usage_metadata)
+        except Exception as e:
+            logger.warning(f"Failed to calculate cost/metadata for Phase 1: {e}")
+            response_metadata = {} # Ensure it's empty if extraction fails
+            cost = 0.0 # Ensure cost is 0.0 if calculation fails
+
+        logger.warning(f"Phase 1 Finished: Model={model_name}, Supplier={supplier_code}, Email={detected_email}, ID={detected_id}, Confidence={confidence:.2f}, Cost=${cost:.6f}")
         logger.info(f"Phase 1 Reasoning: {reasoning}")
 
-        return (supplier_code, confidence)
+        return (supplier_code, confidence, cost, response_metadata, result, detected_email, detected_id)
 
     except Exception as e:
         logger.error(f"Error in supplier detection: {e}")
-        return ("UNKNOWN", 0.0)
+        return ("UNKNOWN", 0.0, 0.0, {}, {}, None, None)
 
 
 def extract_invoice_data(
@@ -449,12 +540,13 @@ def extract_invoice_data(
         retry_count: Current retry attempt (used to toggle prompt versions)
 
     Returns:
-        List of ExtractedOrder objects found in the document.
+        Tuple of (orders_list, cost, usage_metadata)
+        usage_metadata will be a list of usage dicts (one per attempt if we keep track, but here likely just the successful one)
     """
     global _client
     if not _client:
         logger.error("Client not initialized. Call init_client() first.")
-        return []
+        return [], 0.0, {}, {}
 
     # Use v2 (raw extraction) for first attempt, v1 (LLM-calculated) for retries
     prompt_version = "v2" if retry_count == 0 else "v1"
@@ -486,7 +578,7 @@ def extract_invoice_data(
             file_content = f.read()
     except FileNotFoundError:
         logger.error(f"Error: File not found at {file_path}")
-        return []
+        return [], 0.0, {}, {}
 
     # Handle Excel files by converting to text (CSV)
     excel_mime_types = ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]
@@ -500,7 +592,7 @@ def extract_invoice_data(
             file_part = types.Part.from_text(text=csv_text)
         except Exception as e:
             logger.error(f"Error converting Excel file: {e}")
-            return []
+            return [], 0.0, {}, {}
     else:
         # Default: Send as raw bytes (PDF, Image)
         file_part = types.Part.from_bytes(data=file_content, mime_type=mime_type)
@@ -556,13 +648,7 @@ def extract_invoice_data(
         # Clean formatting
         raw_json = raw_json.replace("```json", "").replace("```", "").strip()
 
-        # New logic to make it one line for logs
-        json_one_line = ""
-        try:
-            parsed = json.loads(raw_json)
-            json_one_line = json.dumps(parsed, ensure_ascii=False)
-        except Exception:
-            json_one_line = raw_json.replace("\n", " ").replace("\r", "")
+
 
         # Log for cloud logging
         logger.info(f"✅ Phase 2 Finished (Model={model_name}). JSON received.")
@@ -581,7 +667,20 @@ def extract_invoice_data(
             logger.error(f"❌ AI returned invalid JSON: {raw_json[:200]}...")
 
         multi_order = MultiOrderResponse.model_validate_json(raw_json)
-        return multi_order.orders
+
+        # Calculate Cost
+        usage_metadata = {}
+        cost = 0.0
+        try:
+            response_metadata = _extract_response_metadata(response)
+            usage_metadata = response_metadata.get("usage", {})
+            cost = calculate_cost(model_name, usage_metadata)
+        except Exception as e:
+             logger.warning(f"Failed to calculate cost for Phase 2: {e}")
+
+        logger.warning(f"Phase 2 Cost: ${cost:.6f}")
+
+        return multi_order.orders, cost, response_metadata, parsed_json
 
     except Exception as e:
         logger.error(f"Gemini API or Parsing failed: {e}")
