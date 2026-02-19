@@ -81,9 +81,9 @@ def calculate_net_unit_price(
     return round(net_price, 2)
 
 
-def calculate_sell_price(net_price: float) -> float:
+def _calculate_sell_price_old(net_price: float) -> float:
     """
-    Calculate sell price from net price with .90 rounding.
+    [DEPRECATED] Calculate sell price from net price with .90 rounding.
 
     Rules:
     - Multiply net price by 2
@@ -160,7 +160,7 @@ def _calculate_sell_price_v2(net_price: float) -> float:
 
     # For net >= 15: round to nearest X4.90 or X9.90
     int_part = int(doubled)
-    last_digit = int_part % 10
+
 
     # Targets are: ...4, ...9
     # For each last digit, find the closest target
