@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import re
 from typing import Any, Dict
 
 import functions_framework
@@ -8,14 +9,15 @@ from pydantic import ValidationError
 
 from src.core.events import OrderIngestedEvent
 from src.core.processor import OrderProcessor
-from src.extraction.vertex_client import detect_supplier, init_client
 from src.data.items_service import ItemsService
 from src.data.supplier_service import SupplierService
 from src.export.excel_generator import generate_excel_from_order
 from src.export.new_items_generator import filter_new_items_from_order, generate_new_items_excel
+from src.extraction.vertex_client import detect_supplier, init_client
 from src.ingestion.firestore_writer import save_order_to_firestore
 from src.ingestion.gcs_writer import download_file_from_gcs
 from src.ingestion.gmail_utils import get_gmail_service, send_reply
+from src.shared.ai_cost import calculate_cost_ils
 from src.shared.config import settings
 from src.shared.logger import get_logger
 from src.shared.session_store import create_session
@@ -53,9 +55,9 @@ def process_order_event(cloud_event: Any):
             logger.error(f"Invalid event format: {e}")
             return
 
-        logger.info(f"========================================================================")
+        logger.info("========================================================================")
         logger.info(f">>> STARTING ORDER PIPELINE: {event.event_id} (File: {event.filename})")
-        logger.info(f"========================================================================")
+        logger.info("========================================================================")
 
         # 3. Download File
         temp_path = f"/tmp/{event.filename}" if os.name != "nt" else f"temp_{event.filename}"
@@ -64,17 +66,72 @@ def process_order_event(cloud_event: Any):
             return
 
         try:
-            # 4. Phase 1: Supplier Detection
-            logger.info(">>> PHASE 1: Supplier Detection...")
-            email_context = event.email_metadata.body_snippet
+            # 4. Phase 0: Local Supplier Detection (Metadata & Regex)
+            from src.extraction.local_detector import LocalSupplierDetector
+            local_detector = LocalSupplierDetector()
             
-            detected_code, confidence = detect_supplier(
-                email_body=email_context,
-                invoice_file_path=temp_path,
-                invoice_mime_type=event.mime_type
+            logger.info(">>> PHASE 0: Local Supplier Detection...")
+            
+            # Extract metadata from event
+            email_meta = {
+                "sender": event.email_metadata.sender,
+                "subject": event.email_metadata.subject,
+                "body": event.email_metadata.body_snippet or ""
+            }
+            
+            detected_code, confidence, detection_method = local_detector.detect_supplier(
+                file_path=temp_path,
+                mime_type=event.mime_type,
+                email_metadata=email_meta
             )
             
+            phase1_cost = 0.0
+            detected_email = None # Initialize detected_email for later use
+            detected_id = None # Initialize detected_id for later use
+            
+            if detected_code != "UNKNOWN":
+                 logger.info(f"✅ Supplier Locally Detected via {detection_method}: {detected_code} (Conf: {confidence})")
+            else:
+                # Fallback to Phase 1: Vertex AI
+                logger.info("⚠️ Local detection failed. Proceeding to Vertex AI...")
+                logger.info(">>> PHASE 1: Supplier Detection (Vertex AI)...")
+                email_context = event.email_metadata.body_snippet
+                
+                detected_code, confidence, phase1_cost, _, _, detected_email, detected_id = detect_supplier(
+                    email_body=email_context,
+                    invoice_file_path=temp_path,
+                    invoice_mime_type=event.mime_type
+                )
+                logger.info(f"Phase 1 Cost: ${phase1_cost:.6f}")
+
             supplier_service = SupplierService()
+            # --- Auto-Learning: Add detected email & ID to supplier ---
+            if detected_code != "UNKNOWN":
+                # 1. Email
+                if detected_email:
+                    detected_email = detected_email.strip().lower()
+                    # Verify it's a valid email format and not blacklisted
+                    if "@" in detected_email and not local_detector._is_blacklisted_email(detected_email):
+                       logger.info(f"🧠 Auto-Learning: Attempting to link {detected_email} to {detected_code}")
+                       try:
+                           added = supplier_service.add_email_to_supplier(detected_code, detected_email)
+                           if added:
+                               logger.info(f"🎉 Auto-Learned: {detected_email} is now linked to {detected_code}")
+                       except Exception as e:
+                           logger.error(f"Auto-learning email failed: {e}")
+
+                # 2. Global ID (Business ID)
+                if detected_id:
+                    logger.info(f"🧠 Auto-Learning: Attempting to link ID {detected_id} to {detected_code}")
+                    try:
+                         # Only updates if currently missing and not conflicting
+                         updated = supplier_service.update_missing_global_id(detected_code, detected_id)
+                         if updated:
+                             logger.info(f"🎉 Auto-Learned: ID {detected_id} is now linked to {detected_code}")
+                    except Exception as e:
+                        logger.error(f"Auto-learning ID failed: {e}")
+            # -----------------------------------------------------
+            
             supplier_instructions = None
             supplier_name = "Unknown"
             
@@ -90,12 +147,15 @@ def process_order_event(cloud_event: Any):
             # 5. Phase 2: Extraction
             logger.info(">>> PHASE 2: Extraction & Post-Processing...")
             processor = OrderProcessor()
-            orders = processor.process_file(
+            orders, phase2_cost, _, _ = processor.process_file(
                 temp_path, 
                 mime_type=event.mime_type, 
                 email_context=email_context,
                 supplier_instructions=supplier_instructions
             )
+            
+            total_processing_cost = phase1_cost + phase2_cost
+            logger.info(f"Phase 2 Cost: ${phase2_cost:.6f} | Total Pipeline Cost: ${total_processing_cost:.6f}")
 
             gmail_service = get_gmail_service()
             if not gmail_service:
@@ -148,6 +208,11 @@ def process_order_event(cloud_event: Any):
                 order.supplier_code = final_code
                 order.supplier_name = supplier_name
                 
+                # Assign Pro-Rated Cost (split total cost equally among extracted orders)
+                if len(orders) > 0:
+                    order.processing_cost = round(total_processing_cost / len(orders), 6)
+                    order.processing_cost_ils = calculate_cost_ils(order.processing_cost)
+                
                 # 7. Identify and Handle New Items
                 order_barcodes = [str(item.barcode).strip() for item in order.line_items if item.barcode]
                 new_barcodes = items_service.get_new_barcodes(order_barcodes)
@@ -166,8 +231,11 @@ def process_order_event(cloud_event: Any):
                         items_service.add_new_items_batch(items_to_add)
                         logger.info(f"✅ Auto-added {len(items_to_add)} valid new items to database.")
                     
-                    safe_invoice_num = "".join([c if c.isalnum() or c in ('-', '_') else '_' for c in str(order.invoice_number)])
-                    new_items_filename = f"new_items_{safe_invoice_num}_{final_code}.xlsx"
+
+                    safe_invoice_num = re.sub(r'[^a-zA-Z0-9_-]', '_', str(order.invoice_number))
+                    safe_supplier_code = re.sub(r'[^a-zA-Z0-9_-]', '_', str(final_code))
+                    
+                    new_items_filename = f"new_items_{safe_invoice_num}_{safe_supplier_code}.xlsx"
                     new_items_path = f"/tmp/{new_items_filename}"
                     generate_new_items_excel(new_items, final_code, new_items_path)
                     attachments.append(new_items_path)
@@ -184,8 +252,10 @@ def process_order_event(cloud_event: Any):
                 logger.info(f"✅ Order saved to Firestore (ID: {doc_id}). Session created: {session_id}")
                 
                 # 9. Generate Order Excel Attachment
-                safe_invoice_num = "".join([c if c.isalnum() or c in ('-', '_') else '_' for c in str(order.invoice_number)])
-                order_excel_filename = f"order_{safe_invoice_num}_{final_code}.xlsx"
+                safe_invoice_num = re.sub(r'[^a-zA-Z0-9_-]', '_', str(order.invoice_number))
+                safe_supplier_code = re.sub(r'[^a-zA-Z0-9_-]', '_', str(final_code))
+                
+                order_excel_filename = f"order_{safe_invoice_num}_{safe_supplier_code}.xlsx"
                 order_excel_path = f"/tmp/{order_excel_filename}"
                 try:
                     generate_excel_from_order(order, order_excel_path)
@@ -198,6 +268,7 @@ def process_order_event(cloud_event: Any):
                 msg_body += "<ul>"
                 msg_body += f"<li>{get_text('email_att_extracted', count=len(order.line_items)).strip()}</li>"
                 msg_body += f"<li>{get_text('email_att_supplier', name=supplier_name, code=final_code).strip()}</li>"
+                msg_body += f"<li>💰 Estimated Cost: {order.processing_cost_ils:.3f} ₪</li>"
                 
                 if new_items_count > 0:
                     msg_body += f"<li>{get_text('email_att_new_items', count=new_items_count).strip()}</li>"

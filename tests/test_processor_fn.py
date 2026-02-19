@@ -70,9 +70,9 @@ def test_process_order_event_success(mock_processor, mock_download, mock_save_fi
          patch("src.functions.processor_fn.ItemsService") as mock_items_svc, \
          patch("src.functions.processor_fn.get_gmail_service") as mock_gmail, \
          patch("src.functions.processor_fn.send_reply") as mock_reply, \
-         patch("src.functions.processor_fn.generate_excel_from_order") as mock_gen_excel:
+         patch("src.functions.processor_fn.generate_excel_from_order") as _mock_gen_excel:
         
-        mock_detect.return_value = ("S123", 0.95)
+        mock_detect.return_value = ("S123", 0.95, 0.05, {}, {}, "test@example.com", "123456")
         mock_supplier_svc.return_value.get_supplier.return_value = {"name": "Test Supplier"}
         mock_items_svc.return_value.get_new_barcodes.return_value = []
         mock_gmail.return_value = MagicMock()
@@ -88,7 +88,7 @@ def test_process_order_event_success(mock_processor, mock_download, mock_save_fi
             warnings=[],
             line_items=[LineItem(barcode="7290000000001", description="Test Item", quantity=1.0)]
         )
-        processor_instance.process_file.return_value = [mock_order]
+        processor_instance.process_file.return_value = ([mock_order], 0.1, 0, 0)
 
         # Run
         process_order_event(cloud_event)
@@ -112,8 +112,8 @@ def test_process_order_event_download_fail(mock_processor, mock_download):
     cloud_event = create_cloud_event(event_payload)
     mock_download.return_value = False  # Fail download
 
-    with patch("src.functions.processor_fn.get_gmail_service") as mock_gmail, \
-         patch("src.functions.processor_fn.send_reply") as mock_reply:
+    with patch("src.functions.processor_fn.get_gmail_service") as _mock_gmail, \
+         patch("src.functions.processor_fn.send_reply") as _mock_reply:
         process_order_event(cloud_event)
 
     mock_processor.return_value.process_file.assert_not_called()
@@ -130,14 +130,14 @@ def test_process_order_event_no_orders(mock_processor, mock_download, mock_save_
     }
     cloud_event = create_cloud_event(event_payload)
     mock_download.return_value = True
-    mock_processor.return_value.process_file.return_value = []  # No orders
+    mock_processor.return_value.process_file.return_value = ([], 0.0, 0, 0)  # No orders
 
     with patch("src.functions.processor_fn.detect_supplier") as mock_detect, \
-         patch("src.functions.processor_fn.SupplierService") as mock_supplier_svc, \
+         patch("src.functions.processor_fn.SupplierService") as _mock_supplier_svc, \
          patch("src.functions.processor_fn.get_gmail_service") as mock_gmail, \
          patch("src.functions.processor_fn.send_reply") as mock_reply:
         
-        mock_detect.return_value = ("UNKNOWN", 0.0)
+        mock_detect.return_value = ("UNKNOWN", 0.0, 0.0, {}, {}, None, None)
         mock_gmail.return_value = MagicMock()
         
         process_order_event(cloud_event)
