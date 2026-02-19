@@ -11,8 +11,8 @@ from googleapiclient.discovery import build
 from src.core.events import EmailMetadata, OrderIngestedEvent
 from src.ingestion.gcs_writer import upload_to_gcs
 from src.ingestion.gmail_utils import get_email_body, get_gmail_service
-from src.shared.idempotency_service import IdempotencyService
 from src.shared.config import settings
+from src.shared.idempotency_service import IdempotencyService
 from src.shared.logger import get_logger
 
 logger = get_logger(__name__)

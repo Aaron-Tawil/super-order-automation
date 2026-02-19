@@ -37,7 +37,8 @@ def upload_to_gcs(file_path: str, original_filename: str) -> str:
             bucket = client.bucket(bucket_name)
 
             # Generate unique name
-            unique_name = f"{uuid.uuid4()}_{original_filename}"
+            safe_filename = "".join([c for c in original_filename if c.isalnum() or c in ('-', '_', '.')]).strip()
+            unique_name = f"{uuid.uuid4()}_{safe_filename}"
             blob = bucket.blob(unique_name)
 
             # Use increased timeout AND explicit retry deadline

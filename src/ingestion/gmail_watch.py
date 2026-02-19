@@ -6,7 +6,6 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from src.shared.config import settings
-
 from src.shared.logger import get_logger
 
 logger = get_logger(__name__)
