@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # Comma-separated string of emails to ignore in context
     EXCLUDED_EMAILS_STR: str = Field(validation_alias="EXCLUDED_EMAILS", default="")
 
+    # --- Local Supplier Detection ---
+    # IDs to ignore (User's company IDs)
+    BLACKLIST_IDS_STR: str = Field(validation_alias="BLACKLIST_IDS", default="515020394,029912221")
+
     # --- Web UI ---
     WEB_UI_URL: str = Field(validation_alias="WEB_UI_URL", default="http://localhost:8501")
 
@@ -52,7 +56,19 @@ class Settings(BaseSettings):
         """Parsed list of excluded emails."""
         if not self.EXCLUDED_EMAILS_STR:
             return []
-        return [e.strip() for e in self.EXCLUDED_EMAILS_STR.split(",") if e.strip()]
+        return [e.strip().lower() for e in self.EXCLUDED_EMAILS_STR.split(",") if e.strip()]
+
+    @property
+    def blacklist_ids(self) -> set[str]:
+        """Set of blacklisted IDs."""
+        if not self.BLACKLIST_IDS_STR:
+            return set()
+        return {id.strip() for id in self.BLACKLIST_IDS_STR.split(",") if id.strip()}
+
+    @property
+    def blacklist_emails(self) -> set[str]:
+        """Set of blacklisted emails (Same as excluded_emails, but as a Set)."""
+        return set(self.excluded_emails)
 
 
 # Singleton instance
