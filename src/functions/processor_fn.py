@@ -86,8 +86,9 @@ def process_order_event(cloud_event: Any):
             )
             
             phase1_cost = 0.0
-            detected_email = None # Initialize detected_email for later use
-            detected_id = None # Initialize detected_id for later use
+            detected_email = None
+            detected_id = None
+            email_context = event.email_metadata.body_snippet
             
             if detected_code != "UNKNOWN":
                  logger.info(f"✅ Supplier Locally Detected via {detection_method}: {detected_code} (Conf: {confidence})")
@@ -95,7 +96,6 @@ def process_order_event(cloud_event: Any):
                 # Fallback to Phase 1: Vertex AI
                 logger.info("⚠️ Local detection failed. Proceeding to Vertex AI...")
                 logger.info(">>> PHASE 1: Supplier Detection (Vertex AI)...")
-                email_context = event.email_metadata.body_snippet
                 
                 detected_code, confidence, phase1_cost, _, _, detected_email, detected_id = detect_supplier(
                     email_body=email_context,
@@ -268,7 +268,7 @@ def process_order_event(cloud_event: Any):
                 msg_body += "<ul>"
                 msg_body += f"<li>{get_text('email_att_extracted', count=len(order.line_items)).strip()}</li>"
                 msg_body += f"<li>{get_text('email_att_supplier', name=supplier_name, code=final_code).strip()}</li>"
-                msg_body += f"<li>💰 Estimated Cost: {order.processing_cost_ils:.3f} ₪</li>"
+                msg_body += f"<li>{get_text('email_est_cost', cost=order.processing_cost_ils).strip()}</li>"
                 
                 if new_items_count > 0:
                     msg_body += f"<li>{get_text('email_att_new_items', count=new_items_count).strip()}</li>"

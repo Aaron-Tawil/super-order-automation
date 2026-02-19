@@ -51,8 +51,12 @@ def deploy():
     env_vars["ENVIRONMENT"] = "cloud"
     env_vars["LOG_LEVEL"] = "DEBUG"
 
-    # Construct env string for gcloud
-    env_string = ",".join(f"{k}={v}" for k, v in env_vars.items())
+    import yaml
+    env_file_path = "env_vars.yaml"
+    with open(env_file_path, "w") as f:
+        yaml.dump(env_vars, f)
+
+    print(f"Generated {env_file_path} for deployment based on .env")
 
     # 2. Deploy to Cloud Run
     print("\n[2/3] Deploying to Cloud Run...")
@@ -63,9 +67,13 @@ def deploy():
         f"--region {REGION} "
         f"--allow-unauthenticated "
         f"--project {PROJECT_ID} "
-        f"--set-env-vars={env_string} "
+        f"--env-vars-file {env_file_path} "
     )
     run_command(deploy_cmd)
+    
+    # Cleanup
+    if os.path.exists(env_file_path):
+        os.remove(env_file_path)
 
     print("\n[3/3] Deployment Complete!")
     # Get actual URL

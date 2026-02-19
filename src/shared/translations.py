@@ -139,6 +139,7 @@ HEBREW_STRINGS = {
     "email_warn_no_barcode": "⚠️ אזהרה: נמצאו {count} שורות ללא ברקוד בקובץ האקסל. יש להשלים אותן ידנית.",
     "email_edit_link": "✏️ צריך לבצע תיקונים? ערוך אונליין כאן:",
     "email_signoff": "- הבוט של Super Order",
+    "email_est_cost": "💰 עלות משוערת: {cost:.3f} ₪",
     "email_subject_re": "תגובה: {subject}",
     "email_fail_body": "נכשל בחילוץ נתוני ההזמנה.",
     "email_err_subject": "שגיאה בעיבוד ההזמנה",

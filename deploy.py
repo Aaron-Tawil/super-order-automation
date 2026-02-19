@@ -25,6 +25,7 @@ import os
 import subprocess
 import sys
 import time
+import yaml
 from pathlib import Path
 
 # Configuration
@@ -197,90 +198,100 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
     # Force DEBUG level to ensure all logs appear (including detailed debug logs)
     env_vars["LOG_LEVEL"] = "DEBUG"
     
-    env_string = ",".join(f"{k}={v}" for k, v in env_vars.items()) if env_vars else ""
+    # Create temporary env vars file
+    env_file_path = os.path.abspath("env_vars.yaml")
+    try:
+        with open(env_file_path, "w") as f:
+            yaml.dump(env_vars, f)
+        
+        print_info(f"Generated {env_file_path} for deployment")
 
-    # 1. Deploy 'order-bot' (Ingestion Service)
-    if skip_bot:
-        print_info(f"Skipping {FUNCTION_NAME} deployment (--skip-bot)")
-    else:
-        print_info(f"Deploying Ingestion Service ({FUNCTION_NAME})...")
-        cmd_main = (
-            f"gcloud functions deploy {FUNCTION_NAME} "
-            f"--gen2 "
-            f"--runtime=python311 "
-            f"--region={REGION} "
-            f"--source=. "
-            f"--entry-point=order_bot "
-            f"--trigger-topic={PUBSUB_TOPIC} "
-            f"--project={PROJECT_ID} "
-            f"--memory=512Mi "
-            f"--timeout=60s "
-            f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest"
-        )
-        if env_string:
-            cmd_main += f" --set-env-vars={env_string}"
-
-        result_main = subprocess.run(cmd_main, shell=True)
-        if result_main.returncode != 0:
-            print_error(f"Failed to deploy {FUNCTION_NAME}")
-            sys.exit(1)
+        # 1. Deploy 'order-bot' (Ingestion Service)
+        if skip_bot:
+            print_info(f"Skipping {FUNCTION_NAME} deployment (--skip-bot)")
         else:
-            print_success(f"{FUNCTION_NAME} deployed")
+            print_info(f"Deploying Ingestion Service ({FUNCTION_NAME})...")
+            cmd_main = (
+                f"gcloud functions deploy {FUNCTION_NAME} "
+                f"--gen2 "
+                f"--runtime=python311 "
+                f"--region={REGION} "
+                f"--source=. "
+                f"--entry-point=order_bot "
+                f"--trigger-topic={PUBSUB_TOPIC} "
+                f"--project={PROJECT_ID} "
+                f"--memory=512Mi "
+                f"--timeout=60s "
+                f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest "
+                f"--env-vars-file=\"{env_file_path}\""
+            )
 
-    # 2. Deploy 'process-order-event' (Processing Service)
-    if skip_processor:
-        print_info(f"Skipping {PROCESSING_FUNCTION_NAME} deployment (--skip-processor)")
-    else:
-        print_info(f"Deploying Processing Service ({PROCESSING_FUNCTION_NAME})...")
-        # Processing function needs more memory (1Gi) and longer timeout (5m) for Gemini
-        cmd_process = (
-            f"gcloud functions deploy {PROCESSING_FUNCTION_NAME} "
-            f"--gen2 "
-            f"--runtime=python311 "
-            f"--region={REGION} "
-            f"--source=. "
-            f"--entry-point=process_order_event "
-            f"--trigger-topic={INGESTION_TOPIC} "
-            f"--project={PROJECT_ID} "
-            f"--memory=1Gi "
-            f"--timeout=300s "
-            f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest"
-        )
-        if env_string:
-            cmd_process += f" --set-env-vars={env_string}"
+            result_main = subprocess.run(cmd_main, shell=True)
+            if result_main.returncode != 0:
+                print_error(f"Failed to deploy {FUNCTION_NAME}")
+                sys.exit(1)
+            else:
+                print_success(f"{FUNCTION_NAME} deployed")
 
-        result_process = subprocess.run(cmd_process, shell=True)
-        if result_process.returncode != 0:
-            print_error(f"Failed to deploy {PROCESSING_FUNCTION_NAME}")
-            sys.exit(1)
+        # 2. Deploy 'process-order-event' (Processing Service)
+        if skip_processor:
+            print_info(f"Skipping {PROCESSING_FUNCTION_NAME} deployment (--skip-processor)")
         else:
-            print_success(f"{PROCESSING_FUNCTION_NAME} deployed")
+            print_info(f"Deploying Processing Service ({PROCESSING_FUNCTION_NAME})...")
+            # Processing function needs more memory (1Gi) and longer timeout (5m) for Gemini
+            cmd_process = (
+                f"gcloud functions deploy {PROCESSING_FUNCTION_NAME} "
+                f"--gen2 "
+                f"--runtime=python311 "
+                f"--region={REGION} "
+                f"--source=. "
+                f"--entry-point=process_order_event "
+                f"--trigger-topic={INGESTION_TOPIC} "
+                f"--project={PROJECT_ID} "
+                f"--memory=1Gi "
+                f"--timeout=300s "
+                f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest "
+                f"--env-vars-file=\"{env_file_path}\""
+            )
 
-    # 3. Deploy 'renew-watch-orders' (Maintenance functionality)
-    if skip_renew_watch:
-        print_info("Skipping renew-watch-orders deployment (--skip-renew-watch)")
-    else:
-        print_info("Deploying renew-watch-orders...")
-        cmd_renew = (
-            f"gcloud functions deploy renew-watch-orders "
-            f"--gen2 "
-            f"--runtime=python311 "
-            f"--region={REGION} "
-            f"--source=. "
-            f"--entry-point=renew_watch "
-            f"--trigger-http "
-            f"--allow-unauthenticated "
-            f"--project={PROJECT_ID} "
-            f"--memory=512Mi "
-            f"--timeout=60s "
-            f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest"
-        )
-
-        result_renew = subprocess.run(cmd_renew, shell=True)
-        if result_renew.returncode != 0:
-            print_warning("Failed to deploy renew-watch-orders (non-critical if logic didn't change)")
+            result_process = subprocess.run(cmd_process, shell=True)
+            if result_process.returncode != 0:
+                print_error(f"Failed to deploy {PROCESSING_FUNCTION_NAME}")
+                sys.exit(1)
+            else:
+                print_success(f"{PROCESSING_FUNCTION_NAME} deployed")
+        
+        # 3. Deploy 'renew-watch-orders' (Maintenance functionality)
+        if skip_renew_watch:
+            print_info("Skipping renew-watch-orders deployment (--skip-renew-watch)")
         else:
-            print_success("renew-watch-orders deployed")
+            print_info("Deploying renew-watch-orders...")
+            cmd_renew = (
+                f"gcloud functions deploy renew-watch-orders "
+                f"--gen2 "
+                f"--runtime=python311 "
+                f"--region={REGION} "
+                f"--source=. "
+                f"--entry-point=renew_watch "
+                f"--trigger-http "
+                f"--allow-unauthenticated "
+                f"--project={PROJECT_ID} "
+                f"--memory=512Mi "
+                f"--timeout=60s "
+                f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest "
+                f"--env-vars-file=\"{env_file_path}\""
+            )
+
+            result_renew = subprocess.run(cmd_renew, shell=True)
+            if result_renew.returncode != 0:
+                print_warning("Failed to deploy renew-watch-orders (non-critical if logic didn't change)")
+            else:
+                print_success("renew-watch-orders deployed")
+
+    finally:
+        # Cleanup env file
+        if os.path.exists(env_file_path):
+            os.remove(env_file_path)
 
 
 def verify_deployment():

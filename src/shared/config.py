@@ -2,6 +2,7 @@ from typing import List, Optional
 
 from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from src.shared import constants
 
 
 class Settings(BaseSettings):
@@ -53,17 +54,24 @@ class Settings(BaseSettings):
 
     @property
     def excluded_emails(self) -> list[str]:
-        """Parsed list of excluded emails."""
+        """Parsed list of excluded emails, combined with defaults in constants."""
+        base_list = constants.EXCLUDED_EMAILS
         if not self.EXCLUDED_EMAILS_STR:
-            return []
-        return [e.strip().lower() for e in self.EXCLUDED_EMAILS_STR.split(",") if e.strip()]
+            return base_list
+        
+        env_list = [e.strip().lower() for e in self.EXCLUDED_EMAILS_STR.split(",") if e.strip()]
+        # Union of both lists
+        return list(set(base_list + env_list))
 
     @property
     def blacklist_ids(self) -> set[str]:
-        """Set of blacklisted IDs."""
+        """Set of blacklisted IDs, combined with defaults in constants."""
+        base_set = set(constants.BLACKLIST_IDS)
         if not self.BLACKLIST_IDS_STR:
-            return set()
-        return {id.strip() for id in self.BLACKLIST_IDS_STR.split(",") if id.strip()}
+            return base_set
+        
+        env_set = {id.strip() for id in self.BLACKLIST_IDS_STR.split(",") if id.strip()}
+        return base_set.union(env_set)
 
     @property
     def blacklist_emails(self) -> set[str]:
