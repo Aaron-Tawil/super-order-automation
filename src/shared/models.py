@@ -93,6 +93,11 @@ class ExtractedOrder(BaseModel):
         VAT_RATE * 100, description=f"VAT rate as percentage (e.g., {VAT_RATE * 100} for {VAT_RATE * 100}%)"
     )
 
+    # Usage / Cost Metadata
+    processing_cost: float = Field(0.0, description="Estimated cost of AI processing for this order (USD)")
+    processing_cost_ils: float = Field(0.0, description="Estimated cost of AI processing for this order (ILS)")
+    usage_metadata: dict | None = Field(None, description="Raw token usage metadata from AI model")
+
     line_items: list[LineItem] = Field(..., validation_alias=AliasChoices("line_items", "items"))
 
     @field_validator("global_discount_percentage", "total_invoice_discount_amount", "vat_rate", mode="before")

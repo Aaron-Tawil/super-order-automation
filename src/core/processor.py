@@ -27,9 +27,11 @@ class OrderProcessor:
         mime_type: str = None,
         email_context: str = None,
         supplier_instructions: str = None,
-    ) -> list[ExtractedOrder]:
+    ) -> tuple[list[ExtractedOrder], float]:
         """
         Main entry point for processing a file.
+        Returns:
+            Tuple[List[ExtractedOrder], float, dict, dict]: (Extracted Orders, Total Cost USD, Raw Response, Response Metadata)
         """
         # Auto-detect MIME type if not provided
         if mime_type is None:
@@ -44,6 +46,9 @@ class OrderProcessor:
 
         attempt = 0
         final_orders = []
+        total_cost = 0.0
+        final_raw_response = {}
+        final_metadata = {}
 
         while attempt <= MAX_RETRIES:
             logger.warning(f"--- 📄 PIPELINE ATTEMPT {attempt + 1}/{MAX_RETRIES + 1} ---")
@@ -51,23 +56,26 @@ class OrderProcessor:
 
             # Step 1: Raw Extraction (LLM)
             try:
-                orders = vertex_client.extract_invoice_data(
+                orders, attempt_cost, metadata, raw_response = vertex_client.extract_invoice_data(
                     file_path=file_path,
                     mime_type=mime_type,
                     email_context=email_context,
                     supplier_instructions=supplier_instructions,
                     retry_count=attempt,
                 )
+                total_cost += attempt_cost
+                final_raw_response = raw_response
+                final_metadata = metadata
             except Exception as e:
                 logger.error(f"❌ Error during extraction (attempt {attempt}): {e}")
                 if attempt < MAX_RETRIES:
                     attempt += 1
                     continue
-                return []
+                return [], total_cost, {}, {}
 
             if not orders:
                 logger.warning("⚠️ No orders returned from extraction.")
-                return []
+                return [], total_cost, final_raw_response, final_metadata
 
             logger.info(f"✅ LLM returned {len(orders)} order(s). Applying post-processing...")
 
@@ -134,7 +142,7 @@ class OrderProcessor:
             logger.warning(f"✨ Extraction Phase Finished. Total Orders: {len(final_orders)}")
             break
 
-        return final_orders
+        return final_orders, total_cost, final_raw_response, final_metadata
 
     def _calculate_final_net_price(
         self,
@@ -260,7 +268,7 @@ class OrderProcessor:
         best_diff = float('inf')
         best_calc = 0.0
         
-        for label, calc in possibilities.items():
+        for _, calc in possibilities.items():
             diff = abs(calc - order.document_total_with_vat)
             if diff < best_diff:
                 best_diff = diff
