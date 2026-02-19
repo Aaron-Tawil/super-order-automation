@@ -25,8 +25,9 @@ import os
 import subprocess
 import sys
 import time
-import yaml
 from pathlib import Path
+
+import yaml
 
 # Configuration
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "super-home-automation")  # Default for dev, override in CI/CD

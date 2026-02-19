@@ -2,6 +2,7 @@ from typing import List, Optional
 
 from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 from src.shared import constants
 
 
