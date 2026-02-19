@@ -82,6 +82,9 @@ def generate_excel_from_order(order: ExtractedOrder, output_path: str):
     # Save to Excel
     try:
         df.to_excel(output_path, index=False)
-        logger.info(f"Excel file successfully generated at: {output_path}")
+        if isinstance(output_path, str):
+            logger.info(f"Excel file successfully generated at: {output_path}")
+        else:
+            logger.info("Excel file successfully generated in-memory.")
     except Exception as e:
         logger.error(f"Error generating Excel: {e}")

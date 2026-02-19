@@ -154,8 +154,8 @@ if not st.session_state.get("from_email"):
 
                     # 2. Phase 1: Supplier Detection
                     st.text(get_text("phase_1_detect"))
-                    detected_code, confidence = detect_supplier(
-                        email_body="",  # No email context for manual upload
+                    detected_code, confidence, phase1_cost, *rest = detect_supplier(
+                        email_body="Attached is the invoice.",  # Minimal context
                         invoice_file_path=temp_path,
                         invoice_mime_type=mime_type,
                     )
@@ -176,7 +176,7 @@ if not st.session_state.get("from_email"):
                     # 3. Phase 2: Extraction
                     st.text(get_text("phase_2_extract"))
                     processor = OrderProcessor()
-                    orders = processor.process_file(
+                    orders, phase2_cost, _, _ = processor.process_file(
                         temp_path, mime_type=mime_type, supplier_instructions=supplier_instructions
                     )
                     order = orders[0] if orders else None
@@ -246,6 +246,18 @@ if not st.session_state.get("from_email"):
                             st.warning(get_text("gcs_upload_fail", error=e))
                             source_uri = None
 
+                        # --- Cost Calculation for Manual Upload ---
+                        # We need to manually set this because processor_fn (Cloud Function) isn't running here
+                        total_cost_usd = phase1_cost + phase2_cost
+                        
+                        # Import cost calculator
+                        from src.shared.ai_cost import calculate_cost_ils
+                        cost_ils = calculate_cost_ils(total_cost_usd)
+                        
+                        order.processing_cost = total_cost_usd
+                        order.processing_cost_ils = cost_ils
+                        # ------------------------------------------
+
                         # 6. Save to Session
                         session_metadata = {
                             "filename": uploaded_file.name,
@@ -281,7 +293,7 @@ if "extracted_data" in st.session_state:
     st.divider()
 
     # Header Info
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
 
     # Use supplier info from order object if available
     supplier_name = data.get("supplier_name") or "Unknown"
@@ -289,6 +301,11 @@ if "extracted_data" in st.session_state:
 
     c1.metric(get_text("metric_supplier"), f"{supplier_name} ({supplier_code})")
     c2.metric(get_text("metric_invoice"), data.get("invoice_number", "Unknown"))
+    
+    # Cost Display
+    cost_ils = data.get("processing_cost_ils", 0.0)
+    cost_usd = data.get("processing_cost", 0.0)
+    c3.metric("עלות AI (משוער)", f"{cost_ils:.3f} ₪")
 
     # Line Items Editor
     st.subheader(get_text("editor_title"))
@@ -372,18 +389,14 @@ if "extracted_data" in st.session_state:
             excel_df = edited_df[["item_code", "quantity", "final_net_price"]].copy()
             excel_df.columns = ["קוד פריט", "כמות", "מחיר נטו"]
 
-            # Generate Excel
-            output_path = f"temp_order_{data.get('invoice_number', 'gen')}.xlsx"
-            excel_df.to_excel(output_path, index=False)
-
-            with open(output_path, "rb") as f:
-                excel_data = f.read()
-
-            # Cleanup
-            if os.path.exists(output_path):
-                os.remove(output_path)
+            # Generate Excel in-memory
+            import io
+            buffer = io.BytesIO()
+            excel_df.to_excel(buffer, index=False)
+            buffer.seek(0)
+            excel_data = buffer.getvalue()
         except Exception as e:
-            # Log error but don't crash UI, button will be disabled or show error logic
+            # Log error but don't crash UI
             logger.error(f"Excel generation preview failed: {e}")
 
         if excel_data:
@@ -428,7 +441,7 @@ if "extracted_data" in st.session_state:
         st.caption(get_text("new_items_section_caption"))
 
         # Prepare display dataframe with Hebrew column names matching the new items Excel
-        from src.shared.price_utils import calculate_sell_price
+        from src.shared.product_pricing import calculate_sell_price
 
         new_items_display = []
         for item in new_items_data:
@@ -555,7 +568,7 @@ if "extracted_data" in st.session_state:
 
                             # Re-process
                             processor = OrderProcessor()
-                            orders = processor.process_file(temp_path, supplier_instructions=custom_instructions)
+                            orders, retry_cost_usd, _, _ = processor.process_file(temp_path, supplier_instructions=custom_instructions)
 
                             new_order = orders[0] if orders else None
 
@@ -563,6 +576,11 @@ if "extracted_data" in st.session_state:
                                 # Preserve supplier info
                                 new_order.supplier_name = supplier_name
                                 new_order.supplier_code = supplier_code
+
+                                # Assign Cost
+                                from src.shared.ai_cost import calculate_cost_ils
+                                new_order.processing_cost = retry_cost_usd
+                                new_order.processing_cost_ils = calculate_cost_ils(retry_cost_usd)
 
                                 # Update session
                                 st.session_state["extracted_data"] = new_order.model_dump()

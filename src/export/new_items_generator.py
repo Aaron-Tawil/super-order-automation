@@ -24,7 +24,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"
 
 from src.shared.logger import get_logger
 from src.shared.models import ExtractedOrder, LineItem
-from src.shared.price_utils import calculate_sell_price
+from src.shared.product_pricing import calculate_sell_price, remove_vat
 
 logger = get_logger(__name__)
 
