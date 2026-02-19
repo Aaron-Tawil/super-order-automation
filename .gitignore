@@ -16,3 +16,13 @@ tests-data/
 
 .gemini/
 gha-creds-*.json
+tests/output/
+scripts/output/
+*.txt
+!requirements.txt
+!LICENSE
+!README.md
+!GEMINI.md
+!DEPLOYMENT.md
+!task.md
+
