@@ -81,7 +81,7 @@ async def extract_invoice_endpoint(file: UploadFile = File(...)):
 
         # 2. Extract Data
         processor = OrderProcessor()
-        orders = processor.process_file(tmp_path)
+        orders, _, _, _ = processor.process_file(tmp_path)
 
         if not orders:
             logger.error("Extraction returned no orders.")

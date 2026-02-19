@@ -1,12 +1,14 @@
 import os
 import sys
 from datetime import datetime, timedelta
+
 from google.cloud import firestore
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.shared.config import settings
+
 
 def check_orders():
     print(f"Checking collection: {settings.FIRESTORE_ORDERS_COLLECTION} in project: {settings.PROJECT_ID}")
