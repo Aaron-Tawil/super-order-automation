@@ -18,6 +18,7 @@ tests-data/
 gha-creds-*.json
 tests/output/
 scripts/output/
+scripts/tests/output/
 *.txt
 !requirements.txt
 !LICENSE
