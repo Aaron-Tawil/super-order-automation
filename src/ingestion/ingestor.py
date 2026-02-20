@@ -127,6 +127,7 @@ class IngestionService:
                 SUPPORTED_EXTENSIONS = {
                     ".pdf": "application/pdf",
                     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    ".xls": "application/vnd.ms-excel",
                 }
 
                 for part in parts:

@@ -129,7 +129,7 @@ if "extracted_data" in st.session_state:
 
 # --- File Upload Section (only show if not from email) ---
 if not st.session_state.get("from_email"):
-    uploaded_file = st.file_uploader(get_text("upload_label"), type=["pdf", "xlsx"])
+    uploaded_file = st.file_uploader(get_text("upload_label"), type=["pdf", "xlsx", "xls"])
 
     if uploaded_file is not None:
         if st.button(get_text("btn_extract"), type="primary", width="stretch"):
@@ -143,6 +143,8 @@ if not st.session_state.get("from_email"):
                     # Determine MIME type
                     if uploaded_file.name.lower().endswith(".xlsx"):
                         mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    elif uploaded_file.name.lower().endswith(".xls"):
+                        mime_type = "application/vnd.ms-excel"
                     else:
                         mime_type = "application/pdf"
 
