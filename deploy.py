@@ -200,7 +200,7 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
     env_vars["LOG_LEVEL"] = "DEBUG"
     
     # Create temporary env vars file
-    env_file_path = os.path.abspath("env_vars.yaml")
+    env_file_path = os.path.abspath("deploy_env.yaml")
     try:
         with open(env_file_path, "w") as f:
             yaml.dump(env_vars, f)
@@ -226,6 +226,11 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
                 f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest "
                 f"--env-vars-file=\"{env_file_path}\""
             )
+
+            # Ensure file exists
+            if not os.path.exists(env_file_path):
+                with open(env_file_path, "w") as f:
+                    yaml.dump(env_vars, f)
 
             result_main = subprocess.run(cmd_main, shell=True)
             if result_main.returncode != 0:
@@ -255,6 +260,11 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
                 f"--env-vars-file=\"{env_file_path}\""
             )
 
+            # Ensure file exists
+            if not os.path.exists(env_file_path):
+                with open(env_file_path, "w") as f:
+                    yaml.dump(env_vars, f)
+
             result_process = subprocess.run(cmd_process, shell=True)
             if result_process.returncode != 0:
                 print_error(f"Failed to deploy {PROCESSING_FUNCTION_NAME}")
@@ -282,6 +292,11 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
                 f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest "
                 f"--env-vars-file=\"{env_file_path}\""
             )
+
+            # Ensure file exists
+            if not os.path.exists(env_file_path):
+                with open(env_file_path, "w") as f:
+                    yaml.dump(env_vars, f)
 
             result_renew = subprocess.run(cmd_renew, shell=True)
             if result_renew.returncode != 0:
