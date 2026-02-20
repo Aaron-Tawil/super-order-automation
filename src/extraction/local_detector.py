@@ -40,25 +40,30 @@ class LocalSupplierDetector:
     def detect_supplier(self, 
                        file_path: str, 
                        mime_type: str, 
-                       email_metadata: dict[str, str] = None) -> tuple[str, float, str]:
+                       email_metadata: dict[str, str] = None,
+                       debug: bool = False) -> tuple | dict:
         """
         Main entry point.
-        Returns: (supplier_code, confidence, method_used)
-        
-        Confidence:
-            1.0 = Exact Match (Metadata or ID)
-            0.8 = Strong Match (Email in file)
-            0.0 = No Match
+        Normally returns: (supplier_code, confidence, method_used)
+        If debug=True returns: {"code": str, "conf": float, "method": str, "raw_text": str, "found_identifiers": list}
         """
         # 1. Check Email Metadata (Fastest)
         if email_metadata:
-            code, conf = self._check_metadata(email_metadata)
-            if code:
+            code, conf, found_ids = self._check_metadata(email_metadata, return_all=debug)
+            if code and not debug:
                 return code, conf, "metadata"
+            elif debug:
+                return {
+                    "code": code or "UNKNOWN", 
+                    "conf": conf, 
+                    "method": "metadata" if code else "none", 
+                    "raw_text": f"Subject: {email_metadata.get('subject', '')}\nBody: {email_metadata.get('body', '')}", 
+                    "found_identifiers": found_ids
+                }
 
         # 2. Check File Content
         if not os.path.exists(file_path):
-            return "UNKNOWN", 0.0, "none"
+            return {"code": "UNKNOWN", "conf": 0.0, "method": "none", "raw_text": "", "found_identifiers": []} if debug else ("UNKNOWN", 0.0, "none")
 
         text = ""
         if mime_type == "application/pdf":
@@ -67,66 +72,91 @@ class LocalSupplierDetector:
             text = self._extract_text_excel(file_path, mime_type)
         
         if not text:
-            return "UNKNOWN", 0.0, "none"
+            return {"code": "UNKNOWN", "conf": 0.0, "method": "none", "raw_text": "", "found_identifiers": []} if debug else ("UNKNOWN", 0.0, "none")
 
         # 3. Match Identifiers in Text
-        code, conf = self._match_identifiers(text)
+        code, conf, all_identifiers = self._match_identifiers(text, return_all=debug)
+        
+        if debug:
+            return {
+                "code": code or "UNKNOWN",
+                "conf": conf,
+                "method": "content_regex" if code else "none",
+                "raw_text": text,
+                "found_identifiers": all_identifiers
+            }
+
         if code:
             return code, conf, "content_regex"
 
         return "UNKNOWN", 0.0, "none"
 
-    def _check_metadata(self, metadata: dict[str, str]) -> tuple[str | None, float]:
+    def _check_metadata(self, metadata: dict[str, str], return_all=False) -> tuple[str | None, float, list]:
         """Checks Sender, Subject, Body for matches."""
         sender = metadata.get("sender", "").lower()
         subject = metadata.get("subject", "")
         body = metadata.get("body", "")
+        
+        found_ids = []
         
         # 1. Sender Email Match
         # Extract email from "Name <email@domain.com>" format if needed
         email_match = re.search(REGEX_EMAIL, sender)
         if email_match:
             email = email_match.group(0).lower()
+            found_ids.append(email)
             if not self._is_blacklisted_email(email):
                 code = self.supplier_service.match_supplier(email=email)
                 if code != "UNKNOWN":
                     logger.info(f"✅ Local Match by Sender Email: {email} -> {code}")
-                    return code, 1.0
+                    if not return_all:
+                        return code, 1.0, found_ids
 
         # 2. Subject/Body ID Match
         # Combine subject and body for text search
         text_to_scan = f"{subject} {body}"
-        code, conf = self._match_identifiers(text_to_scan)
-        if code:
+        code, conf, more_ids = self._match_identifiers(text_to_scan, return_all=return_all)
+        found_ids.extend(more_ids)
+        
+        if code and not return_all:
             logger.info(f"✅ Local Match by Metadata Text -> {code}")
-            return code, conf
+            return code, conf, found_ids
 
-        return None, 0.0
+        return code, conf, found_ids
 
-    def _match_identifiers(self, text: str) -> tuple[str | None, float]:
+    def _match_identifiers(self, text: str, return_all=False) -> tuple[str | None, float, list]:
         """Finds IDs/Emails in text and checks DB."""
+        found_identifiers = []
+        best_code = None
+        best_conf = 0.0
         
         # Check IDs first (Strongest)
         # Using strict regex from prototype
         for match in re.finditer(REGEX_ISRAELI_ID, text):
             val = match.group(1)
+            found_identifiers.append(val)
             if val not in self.blacklist_ids:
                 code = self.supplier_service.match_supplier(global_id=val)
-                if code != "UNKNOWN":
-                    return code, 1.0
+                if code != "UNKNOWN" and not best_code:
+                    best_code, best_conf = code, 1.0
+                    if not return_all:
+                        return best_code, best_conf, found_identifiers
 
         # Check Emails
         # Case insensitive
         emails = re.findall(REGEX_EMAIL, text)
         for email in emails:
             email_lower = email.lower()
+            found_identifiers.append(email_lower)
             if not self._is_blacklisted_email(email_lower):
                 code = self.supplier_service.match_supplier(email=email_lower)
-                if code != "UNKNOWN":
+                if code != "UNKNOWN" and not best_code:
                     # Email match is very strong if unique
-                    return code, 1.0
+                    best_code, best_conf = code, 1.0
+                    if not return_all:
+                        return best_code, best_conf, found_identifiers
 
-        return None, 0.0
+        return best_code, best_conf, list(set(found_identifiers))
 
     def _is_blacklisted_email(self, email: str) -> bool:
         """Checks if email is in blacklist OR matches a blacklisted domain (@domain.com)."""
