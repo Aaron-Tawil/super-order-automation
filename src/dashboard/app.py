@@ -151,96 +151,32 @@ if not st.session_state.get("from_email"):
                     # Init Services
                     # Using global settings implicitly in init_client
                     init_client()
-                    supplier_service = SupplierService()
-                    items_service = ItemsService()
 
-                    # 2. Phase 1: Supplier Detection
-                    st.text(get_text("phase_1_detect"))
-                    detected_code, confidence, phase1_cost, *rest = detect_supplier(
-                        email_body="Attached is the invoice.",  # Minimal context
-                        invoice_file_path=temp_path,
-                        invoice_mime_type=mime_type,
+                    # 2. Run Pipeline
+                    from src.core.pipeline import ExtractionPipeline
+                    
+                    pipeline = ExtractionPipeline()
+                    result = pipeline.run_pipeline(
+                        file_path=temp_path,
+                        mime_type=mime_type,
+                        email_metadata={"body": "Attached is the invoice."} # Minimal Context
                     )
+                    
+                    order = result.orders[0] if result.orders else None
 
-                    supplier_instructions = None
-                    if detected_code != "UNKNOWN":
-                        # Validate existence
-                        s_data = supplier_service.get_supplier(detected_code)
-                        if s_data:
-                            st.info(get_text("phase_1_identified", name=s_data.get("name"), code=detected_code))
-                            supplier_instructions = s_data.get("special_instructions")
-                        else:
-                            detected_code = "UNKNOWN"
-
-                    if detected_code == "UNKNOWN":
+                    if result.supplier_code != "UNKNOWN":
+                        st.info(get_text("phase_1_identified", name=result.supplier_name, code=result.supplier_code))
+                    else:
                         st.warning(get_text("phase_1_unknown"))
 
-                    # 3. Phase 2: Extraction
-                    st.text(get_text("phase_2_extract"))
-                    processor = OrderProcessor()
-                    orders, phase2_cost, _, _ = processor.process_file(
-                        temp_path, mime_type=mime_type, supplier_instructions=supplier_instructions
-                    )
-                    order = orders[0] if orders else None
-
                     if order:
-                        # Fallback matching if needed
-                        if detected_code == "UNKNOWN" or confidence < 0.7:
-                            fallback = supplier_service.match_supplier(
-                                global_id=order.supplier_global_id,
-                                email=order.supplier_email,
-                                phone=order.supplier_phone,
-                            )
-                            if fallback != "UNKNOWN":
-                                detected_code = fallback
-                                st.success(get_text("phase_fallback_success", code=detected_code))
-
-                        # Set supplier in order
-                        order.supplier_code = detected_code
-                        s_data = supplier_service.get_supplier(detected_code)
-                        order.supplier_name = s_data.get("name", "Unknown") if s_data else "Unknown"
-
-                        # 4. New Items Detection
-                        st.text(get_text("new_items_checking"))
-                        added_barcodes = []
-                        new_items_data = []  # For dashboard display
-                        try:
-                            all_barcodes = [str(i.barcode).strip() for i in order.line_items if i.barcode]
-                            valid_barcodes = [b for b in all_barcodes if len(b) >= 11]
-
-                            new_barcodes = items_service.get_new_barcodes(valid_barcodes)
-
-                            if new_barcodes:
-                                st.info(get_text("new_items_found", count=len(new_barcodes)))
-                                # Filter items to add
-                                items_to_add = []
-                                seen = set()
-                                for item in order.line_items:
-                                    if item.barcode in new_barcodes and item.barcode not in seen:
-                                        # User requested to set item_code same as barcode for auto-added items
-                                        items_to_add.append(
-                                            {
-                                                "barcode": item.barcode,
-                                                "name": item.description,
-                                                "item_code": item.barcode,
-                                            }
-                                        )
-                                        # Collect new items data for dashboard display
-                                        new_items_data.append(
-                                            {
-                                                "barcode": str(item.barcode) if item.barcode else "",
-                                                "description": item.description,
-                                                "final_net_price": item.final_net_price or 0,
-                                            }
-                                        )
-                                        seen.add(item.barcode)
-
-                                added = items_service.add_new_items_batch(items_to_add)
-                                added_barcodes = [i["barcode"] for i in items_to_add]
-                                st.success(get_text("new_items_added", count=added))
-                        except Exception as e:
-                            st.error(get_text("error_general", error=e))
-
+                        if result.detection_method == "extraction_fallback":
+                             st.success(get_text("phase_fallback_success", code=result.supplier_code))
+                                
+                        if result.new_items_added > 0:
+                             st.info(get_text("new_items_found", count=len(result.new_items_data)))
+                             st.success(get_text("new_items_added", count=result.new_items_added))
+                             
                         # 5. Upload to GCS (for Retry functionality)
                         try:
                             source_uri = upload_to_gcs(temp_path, uploaded_file.name)
@@ -248,24 +184,12 @@ if not st.session_state.get("from_email"):
                             st.warning(get_text("gcs_upload_fail", error=e))
                             source_uri = None
 
-                        # --- Cost Calculation for Manual Upload ---
-                        # We need to manually set this because processor_fn (Cloud Function) isn't running here
-                        total_cost_usd = phase1_cost + phase2_cost
-                        
-                        # Import cost calculator
-                        from src.shared.ai_cost import calculate_cost_ils
-                        cost_ils = calculate_cost_ils(total_cost_usd)
-                        
-                        order.processing_cost = total_cost_usd
-                        order.processing_cost_ils = cost_ils
-                        # ------------------------------------------
-
                         # 6. Save to Session
                         session_metadata = {
                             "filename": uploaded_file.name,
                             "source_file_uri": source_uri,
-                            "added_items_barcodes": added_barcodes,
-                            "new_items": new_items_data,  # For dashboard new items section
+                            "added_items_barcodes": result.added_barcodes,
+                            "new_items": result.new_items_data,  # For dashboard new items section
                             "from_manual_upload": True,
                         }
 
@@ -558,32 +482,19 @@ if "extracted_data" in st.session_state:
                             # Init Client (using settings)
                             init_client()
 
-                            # Supplier Service
-                            supplier_service = SupplierService()
-
-                            # Update instructions if provided
-                            if custom_instructions and supplier_code and supplier_code != "UNKNOWN":
-                                supplier_service.update_supplier(
-                                    supplier_code=supplier_code, special_instructions=custom_instructions
-                                )
-                                st.info(get_text("retry_instr_updated", code=supplier_code))
-
-                            # Re-process
-                            processor = OrderProcessor()
-                            orders, retry_cost_usd, _, _ = processor.process_file(temp_path, supplier_instructions=custom_instructions)
-
-                            new_order = orders[0] if orders else None
+                            # Run Pipeline with explicit instructions
+                            from src.core.pipeline import ExtractionPipeline
+                            pipeline = ExtractionPipeline()
+                            
+                            result = pipeline.run_pipeline(
+                                file_path=temp_path,
+                                mime_type="application/pdf" if not ext else f"application/{ext.lstrip('.')}",
+                                force_supplier_instructions=custom_instructions
+                            )
+                            
+                            new_order = result.orders[0] if result.orders else None
 
                             if new_order:
-                                # Preserve supplier info
-                                new_order.supplier_name = supplier_name
-                                new_order.supplier_code = supplier_code
-
-                                # Assign Cost
-                                from src.shared.ai_cost import calculate_cost_ils
-                                new_order.processing_cost = retry_cost_usd
-                                new_order.processing_cost_ils = calculate_cost_ils(retry_cost_usd)
-
                                 # Update session
                                 st.session_state["extracted_data"] = new_order.model_dump()
                                 if session_id:
