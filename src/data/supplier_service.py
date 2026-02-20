@@ -443,7 +443,7 @@ class SupplierService:
             logger.error(f"Error updating supplier: {e}")
             return False
 
-    def add_email_to_supplier(self, supplier_code: str, email: str) -> Tuple[bool, bool]:
+    def add_email_to_supplier(self, supplier_code: str, email: str) -> tuple[bool, bool]:
         """
         Add a new email to an existing supplier. Sets as primary if empty, else adds to additional_emails.
         Performs a GLOBAL check to ensure email isn't already assigned to another supplier.
@@ -512,7 +512,7 @@ class SupplierService:
             logger.error(f"Error adding email to supplier: {e}")
             return False, False
 
-    def update_missing_global_id(self, supplier_code: str, new_global_id: str) -> Tuple[bool, bool]:
+    def update_missing_global_id(self, supplier_code: str, new_global_id: str) -> tuple[bool, bool]:
         """
         Update a supplier's global_id only if it is currently missing.
         Performs a GLOBAL check to ensure ID isn't already assigned to another supplier.
