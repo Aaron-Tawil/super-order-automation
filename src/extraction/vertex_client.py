@@ -510,6 +510,15 @@ def detect_supplier(
 
         logger.warning(f"Phase 1 Finished: Model={model_name}, Supplier={supplier_code}, Email={detected_email}, ID={detected_id}, Confidence={confidence:.2f}, Cost=${cost:.6f}")
         logger.info(f"Phase 1 Reasoning: {reasoning}")
+        
+        # Log structured response for Phase 1
+        logger.info("AI Model Response (Phase 1 - Structured)", extra={
+            "json_fields": {
+                "json_payload": result,
+                "event_type": "ai_response_phase1",
+                "model": model_name
+            }
+        })
 
         return (supplier_code, confidence, cost, response_metadata, result, detected_email, detected_id)
 
@@ -658,10 +667,12 @@ def extract_invoice_data(
             # Log as structured data for advanced filtering
             # Note: with StructuredLogHandler, extra fields are added to jsonPayload
             logger.info("AI Model Response (Phase 2 - Structured)", extra={
-                "json_payload": parsed_json,
-                "event_type": "ai_response",
-                "attempt": retry_count,
-                "model": model_name
+                "json_fields": {
+                    "json_payload": parsed_json,
+                    "event_type": "ai_response",
+                    "attempt": retry_count,
+                    "model": model_name
+                }
             })
         except json.JSONDecodeError:
             logger.error(f"❌ AI returned invalid JSON: {raw_json[:200]}...")
