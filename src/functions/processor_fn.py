@@ -114,9 +114,11 @@ def process_order_event(cloud_event: Any):
                     if "@" in detected_email and not local_detector._is_blacklisted_email(detected_email):
                        logger.info(f"🧠 Auto-Learning: Attempting to link {detected_email} to {detected_code}")
                        try:
-                           added = supplier_service.add_email_to_supplier(detected_code, detected_email)
-                           if added:
+                           success, was_added = supplier_service.add_email_to_supplier(detected_code, detected_email)
+                           if success and was_added:
                                logger.info(f"🎉 Auto-Learned: {detected_email} is now linked to {detected_code}")
+                           elif success and not was_added:
+                               logger.info(f"Email {detected_email} already linked to {detected_code}")
                        except Exception as e:
                            logger.error(f"Auto-learning email failed: {e}")
 
@@ -125,9 +127,11 @@ def process_order_event(cloud_event: Any):
                     logger.info(f"🧠 Auto-Learning: Attempting to link ID {detected_id} to {detected_code}")
                     try:
                          # Only updates if currently missing and not conflicting
-                         updated = supplier_service.update_missing_global_id(detected_code, detected_id)
-                         if updated:
+                         success, was_added = supplier_service.update_missing_global_id(detected_code, detected_id)
+                         if success and was_added:
                              logger.info(f"🎉 Auto-Learned: ID {detected_id} is now linked to {detected_code}")
+                         elif success and not was_added:
+                             logger.info(f"ID {detected_id} already linked to {detected_code}")
                     except Exception as e:
                         logger.error(f"Auto-learning ID failed: {e}")
             # -----------------------------------------------------

@@ -41,13 +41,21 @@ def show_supplier_table(suppliers: list, search: str = "", key_version: int = 0)
     # Convert to DataFrame for display
     df_data = []
     for s in sorted(filtered, key=lambda x: str(x.get("code", ""))):
+        primary_email = s.get("email", "")
+        additional_emails = s.get("additional_emails", [])
+        all_emails = [primary_email] if primary_email else []
+        for ae in additional_emails:
+            if ae and ae not in all_emails:
+                all_emails.append(ae)
+        email_str = ", ".join(all_emails)
+
         df_data.append(
             {
                 get_text("sm_th_code"): s.get("code", ""),
                 get_text("sm_th_name"): s.get("name", ""),
                 get_text("sm_th_global_id"): s.get("global_id", ""),
                 get_text("sm_th_phone"): s.get("phone", ""),
-                get_text("sm_th_email"): s.get("email", ""),
+                get_text("sm_th_email"): email_str,
                 get_text("sm_th_instr"): s.get("special_instructions", ""),
             }
         )
@@ -102,6 +110,10 @@ def show_edit_form(supplier_service: SupplierService, supplier_code: str, suppli
             phone = st.text_input(
                 get_text("lbl_phone"), value=supplier.get("phone", ""), key=f"edit_phone_{supplier_code}"
             )
+            
+            additional_emails = supplier.get("additional_emails", [])
+            if additional_emails:
+                st.caption(f"Additional Emails: {', '.join(additional_emails)}")
 
         st.markdown(get_text("lbl_instr_header"))
         st.markdown(get_text("lbl_instr_sub"))
