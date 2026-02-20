@@ -10,7 +10,6 @@ from src.shared.constants import VAT_RATE
 class VatStatus(StrEnum):
     INCLUDED = "INCLUDED"
     EXCLUDED = "EXCLUDED"
-    EXEMPT = "EXEMPT"
 
 
 class LineItem(BaseModel):
@@ -88,10 +87,19 @@ class ExtractedOrder(BaseModel):
     document_total_with_vat: float | None = Field(
         None, description="Final total amount from bottom of invoice (usually includes VAT)"
     )
-    document_total_quantity: float | None = Field(None, description="Total quantity of items from bottom of invoice")
-    vat_rate: float | None = Field(
-        VAT_RATE * 100, description=f"VAT rate as percentage (e.g., {VAT_RATE * 100} for {VAT_RATE * 100}%)"
+    document_total_without_vat: float | None = Field(
+        None, description="Final total amount from bottom of invoice PRE-VAT (excluding VAT)"
     )
+    document_total_quantity: float | None = Field(None, description="Total quantity of items from bottom of invoice")
+
+    # LLM Verification (Trial 2)
+    is_math_valid: bool | None = Field(None, description="Did the LLM verify that the calculated sum matches the printed total?")
+    math_reasoning: str | None = Field(None, description="Explanation for math discrepancy if any")
+    is_qty_valid: bool | None = Field(None, description="Did the LLM verify that the calculated quantities match?")
+    qty_reasoning: str | None = Field(None, description="Explanation for quantity discrepancy if any")
+
+    # Metadata from API
+    ai_metadata: dict | None = Field(default_factory=dict, description="Metadata from Vertex AI extraction")
 
     # Usage / Cost Metadata
     processing_cost: float = Field(0.0, description="Estimated cost of AI processing for this order (USD)")
@@ -100,14 +108,13 @@ class ExtractedOrder(BaseModel):
 
     line_items: list[LineItem] = Field(..., validation_alias=AliasChoices("line_items", "items"))
 
-    @field_validator("global_discount_percentage", "total_invoice_discount_amount", "vat_rate", mode="before")
+    @field_validator("global_discount_percentage", "total_invoice_discount_amount", mode="before")
     @classmethod
     def coerce_none_to_default(cls, v, info):
         if v is None:
             defaults = {
                 "global_discount_percentage": 0.0,
                 "total_invoice_discount_amount": 0.0,
-                "vat_rate": VAT_RATE * 100,
             }
             return defaults.get(info.field_name, 0.0)
         return v

@@ -3,10 +3,10 @@ from collections import defaultdict
 from typing import List, Optional, Tuple
 
 from src.core.exceptions import ExtractionError, ValidationError
-from src.core.models import ExtractedOrder, LineItem, MultiOrderResponse
 from src.extraction import vertex_client
 from src.shared.constants import MAX_RETRIES, VALIDATION_TOLERANCE, VAT_RATE
 from src.shared.logger import get_logger
+from src.shared.models import ExtractedOrder, LineItem, MultiOrderResponse
 
 # Configure logger
 logger = get_logger(__name__)
@@ -27,7 +27,7 @@ class OrderProcessor:
         mime_type: str = None,
         email_context: str = None,
         supplier_instructions: str = None,
-    ) -> tuple[list[ExtractedOrder], float]:
+    ) -> tuple[list[ExtractedOrder], float, dict, dict]:
         """
         Main entry point for processing a file.
         Returns:
@@ -47,11 +47,12 @@ class OrderProcessor:
         attempt = 0
         final_orders = []
         total_cost = 0.0
-        final_raw_response = {}
+        all_raw_responses = {}
         final_metadata = {}
 
         while attempt <= MAX_RETRIES:
-            logger.warning(f"--- 📄 PIPELINE ATTEMPT {attempt + 1}/{MAX_RETRIES + 1} ---")
+            trial_version = 1 if attempt == 0 else 2
+            logger.warning(f"--- 📄 PIPELINE ATTEMPT {attempt + 1}/{MAX_RETRIES + 1} (TRIAL {trial_version}) ---")
             logger.warning(f"File: {os.path.basename(file_path)} | MIME: {mime_type}")
 
             # Step 1: Raw Extraction (LLM)
@@ -64,20 +65,20 @@ class OrderProcessor:
                     retry_count=attempt,
                 )
                 total_cost += attempt_cost
-                final_raw_response = raw_response
+                all_raw_responses[trial_version] = raw_response
                 final_metadata = metadata
             except Exception as e:
                 logger.error(f"❌ Error during extraction (attempt {attempt}): {e}")
                 if attempt < MAX_RETRIES:
                     attempt += 1
                     continue
-                return [], total_cost, {}, {}
+                return [], total_cost, all_raw_responses, {}
 
             if not orders:
                 logger.warning("⚠️ No orders returned from extraction.")
-                return [], total_cost, final_raw_response, final_metadata
+                return [], total_cost, all_raw_responses, final_metadata
 
-            logger.info(f"✅ LLM returned {len(orders)} order(s). Applying post-processing...")
+            logger.info(f"✅ LLM returned {len(orders)} order(s). Applying post-processing (Trial {trial_version})...")
 
             validated_data = []
             critical_failure_found = False
@@ -86,11 +87,11 @@ class OrderProcessor:
                 # Step 2: Post-Processing logic
                 logger.debug(f"Post-processing order {i+1}...")
 
-                # 2a. Calculate net prices (if v2 prompt used and they are empty)
-                if attempt == 0:
+                # 2a. Calculate net prices (if Trial 1)
+                if trial_version == 1:
                     self._post_process_net_prices(order)
 
-                # 2b. Start Promotions logic (11+1 etc)
+                # 2b. Apply promotions logic (e.g., 11+1 averaging) for BOTH trials
                 self._post_process_promotions(order)
 
                 # 2c. Filter zero quantity
@@ -102,12 +103,13 @@ class OrderProcessor:
                     logger.info(f"Filtered out {original_count - filtered_count} lines with 0 quantity.")
 
                 # Step 3: Validation
-                is_valid_total, calc_total, diff_total = self._validate_totals(order)
+                is_valid_total, calc_total, diff_total = self._validate_totals(order, trial_version)
 
                 if not is_valid_total:
+                    reason_msg = f" (Reason: {order.math_reasoning})" if order.math_reasoning else ""
                     msg = (
                         f"Validation Failed: Document Total ({order.document_total_with_vat}) "
-                        f"!= Calculated Total ({calc_total:.2f}). Diff: {diff_total:.2f}"
+                        f"!= Calculated Total ({calc_total:.2f}). Diff: {diff_total:.2f}{reason_msg}"
                     )
                     logger.warning(f"❌ {msg}")
                     order.warnings.append(msg)
@@ -116,11 +118,12 @@ class OrderProcessor:
                     logger.warning(f"✅ Validation Passed for Order {i+1}! Diff: {diff_total:.2f}")
 
                 # Quantity Validation
-                is_valid_qty, calc_qty, diff_qty = self._validate_quantity(order)
+                is_valid_qty, calc_qty, diff_qty = self._validate_quantity(order, trial_version)
                 if not is_valid_qty:
+                    reason_msg = f" (Reason: {order.qty_reasoning})" if order.qty_reasoning else ""
                     msg = (
                         f"Quantity Validation Failed: Document Qty ({order.document_total_quantity}) "
-                        f"!= Calculated ({calc_qty}). Diff: {diff_qty}"
+                        f"!= Calculated ({calc_qty}). Diff: {diff_qty}{reason_msg}"
                     )
                     logger.warning(f"⚠️ {msg}")
                     order.warnings.append(msg)
@@ -132,7 +135,7 @@ class OrderProcessor:
             # Step 4: Retry Decision
             if critical_failure_found and attempt < MAX_RETRIES:
                 logger.warning(
-                    f"🔄 CRITICAL VALIDATION FAILED. Retrying with higher precision model... (Next: Attempt {attempt + 2})"
+                    f"🔄 CRITICAL VALIDATION FAILED. Switching to Trial 2 logic... (Next: Attempt {attempt + 1})"
                 )
                 attempt += 1
                 continue
@@ -142,7 +145,11 @@ class OrderProcessor:
             logger.warning(f"✨ Extraction Phase Finished. Total Orders: {len(final_orders)}")
             break
 
-        return final_orders, total_cost, final_raw_response, final_metadata
+        if final_metadata:
+            for order in final_orders:
+                order.ai_metadata = final_metadata
+
+        return final_orders, total_cost, all_raw_responses, final_metadata
 
     def _calculate_final_net_price(
         self,
@@ -150,7 +157,6 @@ class OrderProcessor:
         discount_pct: float,
         global_discount_pct: float,
         vat_status: str,
-        vat_rate: float,
     ) -> float:
         """
         Calculate final_net_price from raw extracted values.
@@ -166,31 +172,39 @@ class OrderProcessor:
             price *= 1 - global_discount_pct / 100
 
         # 3. Remove VAT if prices are VAT-inclusive
-        # CRITICAL EXCEPTION: If global_discount_pct is ~15.25%, it IS the VAT removal.
-        is_vat_removal_discount = 15.1 <= (global_discount_pct or 0) <= 15.5
-        
-        if vat_status == "INCLUDED" and not is_vat_removal_discount:
-            price /= 1 + vat_rate / 100
+        if vat_status == "INCLUDED":
+            price /= 1 + VAT_RATE
 
         return round(price, 4)
 
     def _post_process_net_prices(self, order: ExtractedOrder):
         """
-        Calculate final_net_price for each line item if missing.
+        Calculate final_net_price for each line item (Trial 1).
+        If there's a total_invoice_discount_amount, distribute it proportionally.
         """
         global_discount_pct = order.global_discount_percentage or 0.0
-        vat_rate = order.vat_rate or (VAT_RATE * 100)
 
+        # Pass 1: Calculate base net price for all items
         for item in order.line_items:
-            # Only calculate if the LLM left it null/zero (v2 behavior)
-            if not item.final_net_price or item.final_net_price == 0.0:
-                item.final_net_price = self._calculate_final_net_price(
-                    item.raw_unit_price,
-                    item.discount_percentage,
-                    global_discount_pct,
-                    item.vat_status.value,
-                    vat_rate,
-                )
+            item.final_net_price = self._calculate_final_net_price(
+                item.raw_unit_price,
+                item.discount_percentage,
+                global_discount_pct,
+                item.vat_status.value,
+            )
+
+        # Pass 2: Distribute lump-sum discount proportionally ONLY if no percentage was provided
+        # (This prevents double-dipping since percentage and amount usually represent the same discount)
+        discount_amount = order.total_invoice_discount_amount or 0.0
+        if discount_amount > 0 and global_discount_pct == 0.0:
+            # Calculate total raw value to find the ratio
+            total_net_value = sum((item.final_net_price or 0.0) * (item.quantity or 0.0) for item in order.line_items)
+            
+            if total_net_value > 0:
+                # E.g. 50 ILS discount on 500 ILS total = 10% reduction (ratio = 0.90)
+                discount_ratio = 1.0 - (discount_amount / total_net_value)
+                for item in order.line_items:
+                    item.final_net_price = round((item.final_net_price or 0.0) * discount_ratio, 4)
 
     def _post_process_promotions(self, order: ExtractedOrder):
         """
@@ -237,52 +251,59 @@ class OrderProcessor:
 
         order.line_items = new_line_items
 
-    def _validate_totals(self, order: ExtractedOrder) -> tuple[bool, float, float]:
+    def _validate_totals(self, order: ExtractedOrder, trial_version: int) -> tuple[bool, float, float]:
         """
         Validates that the sum of line items matches the document total.
-        Supports multiple common invoice math patterns.
+        Supports multiple common invoice math patterns for Trial 1 (Raw).
+        For Trial 2 (LLM Calc), evaluates exactly one simple math formula.
         """
         if order.document_total_with_vat is None:
             return True, 0.0, 0.0
 
         # 1. Normalize VAT Rate
-        raw_vat = order.vat_rate if order.vat_rate is not None else (VAT_RATE * 100)
-        if 0 < raw_vat < 1.0: # Handle cases where AI returns 0.18 instead of 18
-            raw_vat *= 100
-        vat_factor = 1 + (raw_vat / 100)
+        vat_factor = 1 + VAT_RATE
         
         # 2. Calculate base components
         total_line_net = sum((item.final_net_price or 0.0) * (item.quantity or 0.0) for item in order.line_items)
         
-        # 3. Try different logical combinations to match document_total_with_vat
-        # (Accounting formats vary on whether discounts apply before or after VAT)
-        discount = order.total_invoice_discount_amount or 0.0
-        
-        possibilities = {
-            "Standard (Net -> VAT -> -Discount)": (total_line_net * vat_factor) - discount,
-            "Discounted (Net -> -Discount -> VAT)": (total_line_net - discount) * vat_factor,
-            "Implicit (Already discounted lines -> VAT)": total_line_net * vat_factor,
-            "Direct (Net sum matches Gross - AI Error)": total_line_net
-        }
+        # Trial 2 Validation (LLM calculated the final net price itself, just verifying the pure sum)
+        if trial_version == 2:
+            # We trust the LLM's own self-verification flag for math via Sandbox execution
+            is_valid = order.is_math_valid
+            
+            # If the LLM didn't return a flag (e.g. failure to adhere to schema), fallback to basic math check
+            if is_valid is None:
+                calc = total_line_net * vat_factor
+                diff = abs(calc - order.document_total_with_vat)
+                is_valid = diff <= VALIDATION_TOLERANCE
+                return is_valid, calc, diff
 
-        best_diff = float('inf')
-        best_calc = 0.0
-        
-        for _, calc in possibilities.items():
+            # If LLM said it's invalid, calculate the diff for the warning message
+            calc = total_line_net * vat_factor
             diff = abs(calc - order.document_total_with_vat)
-            if diff < best_diff:
-                best_diff = diff
-                best_calc = calc
+            return is_valid, calc, diff
 
-        is_valid = best_diff <= VALIDATION_TOLERANCE
+        # Trial 1 Validation
+        # The line items already had ALL global and lump sum discounts mathematically baked into them.
+        # We only need to multiply by the vat_factor.
+        calculated_total = total_line_net * vat_factor
+
+        diff = abs(calculated_total - order.document_total_with_vat)
+        is_valid = diff <= VALIDATION_TOLERANCE
 
         if not is_valid:
-            logger.info(f"DEBUG Validation: Net Sum={total_line_net:.2f}, VAT Factor={vat_factor:.2f}, Discount={discount:.2f}")
-            logger.info(f"DEBUG Validation: Document says {order.document_total_with_vat}, closest calc was {best_calc:.2f}")
+            logger.info(
+                f"DEBUG Validation (Trial 1): Net Sum={total_line_net:.2f}, "
+                f"VAT Factor={vat_factor:.2f}"
+            )
+            logger.info(
+                f"DEBUG Validation (Trial 1): Document says {order.document_total_with_vat}, "
+                f"calc was {calculated_total:.2f}"
+            )
 
-        return is_valid, best_calc, best_diff
+        return is_valid, calculated_total, diff
 
-    def _validate_quantity(self, order: ExtractedOrder) -> tuple[bool, float, float]:
+    def _validate_quantity(self, order: ExtractedOrder, trial_version: int) -> tuple[bool, float, float]:
         """
         Validates that the sum of line item quantities matches the document total quantity.
         Returns: Tuple[is_valid, calculated_total, difference]
@@ -291,6 +312,19 @@ class OrderProcessor:
             return True, 0.0, 0.0
 
         calculated_quantity = sum((item.quantity or 0) for item in order.line_items)
+
+        # Trial 2 Validation (LLM verified quantity)
+        if trial_version == 2:
+            is_valid = order.is_qty_valid
+            
+            if is_valid is None:
+                diff = abs(calculated_quantity - order.document_total_quantity)
+                is_valid = diff <= 0.1
+                return is_valid, calculated_quantity, diff
+                
+            diff = abs(calculated_quantity - order.document_total_quantity)
+            return is_valid, calculated_quantity, diff
+
         diff = abs(calculated_quantity - order.document_total_quantity)
 
         # Use a small tolerance for float comparison

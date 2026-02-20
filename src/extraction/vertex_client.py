@@ -25,7 +25,7 @@ from tenacity import (
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
 from src.extraction.prompts import get_invoice_extraction_prompt, get_supplier_detection_prompt
-from src.extraction.schemas import pdf_response_schema, single_order_schema
+from src.extraction.schemas import calc_response_schema, raw_response_schema, supplier_detection_schema
 from src.shared.ai_cost import calculate_cost
 
 # Emails to exclude from supplier detection context
@@ -471,17 +471,7 @@ def detect_supplier(
             contents=[types.Content(role="user", parts=content_parts)],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                response_schema={
-                    "type": "OBJECT",
-                    "properties": {
-                        "supplier_code": {"type": "STRING"},
-                        "confidence": {"type": "NUMBER"},
-                        "reasoning": {"type": "STRING"},
-                        "detected_email": {"type": "STRING", "nullable": True},
-                        "detected_id": {"type": "STRING", "nullable": True},
-                    },
-                    "required": ["supplier_code", "confidence", "reasoning"],
-                },
+                response_schema=supplier_detection_schema,
                 temperature=0.0,
             ),
         )
@@ -557,20 +547,19 @@ def extract_invoice_data(
         logger.error("Client not initialized. Call init_client() first.")
         return [], 0.0, {}, {}
 
-    # Use v2 (raw extraction) for first attempt, v1 (LLM-calculated) for retries
-    prompt_version = "v2" if retry_count == 0 else "v1"
+    # Use Trial 1 (Raw extraction) for first attempt, Trial 2 (LLM-calculated) for retries
+    trial_version = 1 if retry_count == 0 else 2
     prompt_text = get_invoice_extraction_prompt(
         email_context=email_context,
         supplier_instructions=supplier_instructions,
-        version=prompt_version,
-        enable_code_execution=(retry_count > 0),
+        trial=trial_version,
     )
 
     # Use a more powerful model for retries
-    model_name = "gemini-2.5-pro" if retry_count > 0 else "gemini-2.5-flash"
+    model_name = "gemini-2.5-pro" if trial_version == 2 else "gemini-2.5-flash"
     
     logger.warning(f">>> Phase 2: Starting Extraction (Attempt {retry_count}) using {model_name}...")
-    logger.info(f"File: {os.path.basename(file_path)} | Prompt Version: {prompt_version}")
+    logger.info(f"File: {os.path.basename(file_path)} | Trial Version: {trial_version}")
 
     # Auto-detect MIME type if not provided
     if mime_type is None:
@@ -610,12 +599,12 @@ def extract_invoice_data(
     current_tools = None
     current_schema = None
 
-    if retry_count > 0:
+    if trial_version == 2:
         current_tools = [types.Tool(code_execution=types.ToolCodeExecution())]
-        current_schema = None
+        current_schema = None # Enforced via JSON block in prompt when code execution is enabled
     else:
         current_tools = None
-        current_schema = pdf_response_schema
+        current_schema = raw_response_schema
 
     try:
         response = generate_content_safe(
