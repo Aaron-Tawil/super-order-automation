@@ -1,7 +1,7 @@
 import json
 
 from src.extraction.schemas import calc_response_schema, raw_response_schema
-from src.shared.constants import VAT_RATE
+from src.shared.constants import VALIDATION_TOLERANCE, VAT_RATE
 
 
 def get_supplier_detection_prompt(filtered_email: str, invoice_context: str, suppliers_csv: str) -> str:
@@ -93,18 +93,19 @@ def _get_invoice_extraction_prompt_trial_1(email_context: str, supplier_instruct
     You MUST extract EACH order separately as its own object in the 'orders' list.
     
     CRITICAL EXTRACTION RULES:
-    1. EXTRACT EVERY SINGLE LINE ITEM. Do not summarize.
-    2. REPEATING ITEMS: If the same product appears in multiple rows, EXTRACT BOTH ROWS SEPARATELY.
-    3. 'vat_status': Check columns for "Price inc. VAT" / "כולל מע"מ" (INCLUDED) or "Price exc. VAT" / "לפני מע"מ" (EXCLUDED). if not stated - assume EXCLUDED.
+    1. COLUMN IDENTIFICATION: Look closely at the header columns to determine which field is 'quantity' (כמות), 'discount' (הנחה), and 'price' (מחיר). Do NOT be confused by other columns like "Total per row" (סה"כ), "Net total" or other calculated fields.
+    2. EXTRACT EVERY SINGLE LINE ITEM. Do not summarize.
+    3. REPEATING ITEMS: If the same product appears in multiple rows, EXTRACT BOTH ROWS SEPARATELY.
+    4. 'vat_status': Check columns for "Price inc. VAT" / "כולל מע"מ" (INCLUDED) or "Price exc. VAT" / "לפני מע"מ" (EXCLUDED). if not stated - assume EXCLUDED.
        - IMPORTANT: Just REPORT whether the price column includes VAT or not. Do NOT convert the price yourself.
-    4. GLOBAL DISCOUNT: Look for a general discount at the BOTTOM of the invoice (e.g., "הנחה: 15.25%", "הנחה כללית", "discount").
+    5. GLOBAL DISCOUNT: Look for a general discount at the BOTTOM of the invoice (e.g., "הנחה: 15.25%", "הנחה כללית", "discount").
        - If a PERCENTAGE is shown (e.g., "15.25 %"), extract it into 'global_discount_percentage'.
        - If a monetary AMOUNT is shown (e.g., "648.35"), extract it into 'total_invoice_discount_amount'.
        - Extract BOTH if both are shown.
        - IMPORTANT: If the SUPPLIER-SPECIFIC INSTRUCTIONS below mention a global discount that is NOT
          explicitly shown on the document, you MUST still set 'global_discount_percentage' accordingly.
     
-    5. LINE ITEM DETAILS:
+    6. LINE ITEM DETAILS:
        - 'raw_unit_price': THE EXACT NUMBER in the price/מחיר column. DO NOT divide by VAT, DO NOT apply
          any discount, DO NOT calculate anything. Just copy the number as printed.
        - 'discount_percentage': Extract line-level discount percentage if shown (the number in הנחה column).
@@ -114,7 +115,7 @@ def _get_invoice_extraction_prompt_trial_1(email_context: str, supplier_instruct
        - 'vat_status': Apply the VAT status determined above ("INCLUDED" or "EXCLUDED").
        
     
-    6. DOCUMENT TOTALS (For Validation):
+    7. DOCUMENT TOTALS (For Validation):
        - 'document_total_with_vat': Extract the FINAL TOTAL to pay (סה"כ לתשלום).
          *** BIG EXCEPTION (The ONLY cases where you recalculate this value): ***
          1. VAT CORRECTION: If the document states 17% VAT, it is a mistake. You MUST calculate the total for 18% VAT instead.
@@ -126,7 +127,7 @@ def _get_invoice_extraction_prompt_trial_1(email_context: str, supplier_instruct
        - 'document_total_quantity': Extract TOTAL QUANTITY ONLY if explicitly printed on the document
          (e.g., "סה"כ כמות: 510"). If no total quantity line exists, return null. Do NOT sum up quantities yourself.
 
-    7. 'notes': Use this field for any internal notes, explanations, or comments about this order. This helps keep the data fields clean.
+    8. 'notes': Use this field for any internal notes, explanations, or comments about this order. This helps keep the data fields clean.
     
     *** IMPORTANT: BARCODE EXTRACTION ***
     - Look for INTERNATIONAL BARCODE (EAN/GTIN), typically 13 digits.
@@ -167,34 +168,36 @@ def _get_invoice_extraction_prompt_trial_2(email_context: str, supplier_instruct
     In this attempt, we need you to figure out the exact mathematical `final_net_price` for each item.
     
     CRITICAL INSTRUCTIONS:
-    1. EXTRACT EVERY SINGLE LINE ITEM. Do not summarize.
-    2. REPEATING ITEMS: If the same product appears in multiple rows, EXTRACT BOTH ROWS SEPARATELY.
-    3. `final_net_price` CALCULATION REQUIREMENT:
+    1. COLUMN IDENTIFICATION: Look closely at the header columns to determine which field is 'quantity' (כמות), 'discount' (הנחה), and 'price' (מחיר). Do NOT be confused by other columns like "Total per row" (סה"כ שורה), "Net total" or other calculated fields.
+    2. EXTRACT EVERY SINGLE LINE ITEM. Do not summarize.
+    3. REPEATING ITEMS: If the same product appears in multiple rows, EXTRACT BOTH ROWS SEPARATELY.
+    4. `final_net_price` CALCULATION REQUIREMENT:
        - You must determine the FINAL NET PRICE for each item. 
        - This means applying ALL line discounts, ALL global discounts (e.g. 15.25% if found or specified), and REMOVING VAT if the printed price included it.
        - The value you provide must be the pure net cost per unit.
-    4. Provide ONLY the final calculated net price in the JSON schema (`final_net_price`).
+    5. Provide ONLY the final calculated net price in the JSON schema (`final_net_price`).
     
     *** VALIDATION COPY FIELDS (DO NOT CALCULATE) ***
     The following fields are for mathematical validation. You MUST copy them EXACTLY as printed on the document (unless specified in the BIG EXCEPTION below). Do NOT calculate them yourself.
-    5. 'document_total_with_vat': COPY the FINAL TOTAL amount at the bottom of the invoice (סה"כ לתשלום).
+    6. 'document_total_with_vat': COPY the FINAL TOTAL amount at the bottom of the invoice (סה"כ לתשלום).
        *** BIG EXCEPTION (The ONLY cases where you recalculate this value): ***
        1. VAT CORRECTION: If the document states 17% VAT, it is a mistake. You MUST calculate the total for 18% VAT instead.
        2. MISSING GLOBAL DISCOUNT: If the SUPPLIER-SPECIFIC INSTRUCTIONS mention a global discount that is NOT explicitly shown or reflected in the document's printed totals, you MUST recalculate 'document_total_with_vat' to reflect it.
        Otherwise, just copy the value exactly as printed.
-    6. 'document_total_without_vat': COPY the FINAL PRE-VAT TOTAL (סה"כ לפני מע"מ).
+    7. 'document_total_without_vat': COPY the FINAL PRE-VAT TOTAL (סה"כ לפני מע"מ).
        - IMPORTANT: This field must represent the total AFTER any global discount but BEFORE VAT.
        - *** BIG EXCEPTION: *** If the SUPPLIER-SPECIFIC INSTRUCTIONS mention a global discount that is NOT explicitly reflected in the document's printed totals, you MUST recalculate 'document_total_without_vat' to reflect it.
-    7. 'document_total_quantity': COPY the TOTAL QUANTITY ONLY if explicitly printed on the document.
-    8. 'notes': Use this field for any internal notes, explanations, or comments about this order. This is the only place where non-structured commentary is allowed.
+    8. 'document_total_quantity': COPY the TOTAL QUANTITY ONLY if explicitly printed on the document.
+    9. 'notes': Use this field for any internal notes, explanations, or comments about this order. This is the only place where non-structured commentary is allowed.
 
     *** MANDATORY MATH VERIFICATION (CODE EXECUTION) ***
     YOU MUST USE PYTHON CODE TO CALCULATE AND VERIFY THE TOTALS BEFORE ANSWERING.
     1. Write Python code to sum up your calculated line items: `sum(quantity * final_net_price)`.
     2. Apply VAT to your sum: `total_net * (1 + {VAT_RATE})`.
-    3. Compare your calculated gross total strictly to the `document_total_with_vat`.
+    3. Compare your calculated gross total to the `document_total_with_vat`.
     4. Provide the boolean result in `is_math_valid`.
-    5. If the math does NOT balance, explain exactly why in `math_reasoning` (e.g., "Missing a 10 NIS delivery fee", "Discount applied to wrong items").
+       - IMPORTANT: If the difference between your calculated total and the `document_total_with_vat` is less than or equal to {VALIDATION_TOLERANCE}, you MUST mark `is_math_valid` as true.
+    5. If the math does NOT balance (difference > {VALIDATION_TOLERANCE}), explain exactly why in `math_reasoning` (e.g., "Missing a 10 NIS delivery fee", "Discount applied to wrong items").
     6. Compare your sum of quantities to the `document_total_quantity`.
     7. Provide the boolean result in `is_qty_valid` and any explanation in `qty_reasoning`.
     8. AFTER your code execution is finished and verified, output the FINAL JSON result.
