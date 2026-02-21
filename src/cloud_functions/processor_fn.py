@@ -179,8 +179,12 @@ def process_order_event(cloud_event: Any):
                 msg_body += "</ul>"
 
                 # AI Notes & Reasoning
-                if order.notes or order.math_reasoning or order.qty_reasoning:
+                if order.notes or order.math_reasoning or order.qty_reasoning or result.phase1_reasoning:
                     msg_body += "<div style='background-color: #f9f9f9; padding: 10px; border-radius: 5px; margin: 10px 0;'>"
+                    
+                    if result.phase1_reasoning and i == 0: # Only show once
+                        msg_body += f"<strong>{get_text('ai_reasoning_title')} (זיהוי ספק):</strong><br>{result.phase1_reasoning}<br><br>"
+
                     if order.notes:
                         msg_body += f"<strong>{get_text('ai_notes_title')}</strong><br>{order.notes}<br>"
                     

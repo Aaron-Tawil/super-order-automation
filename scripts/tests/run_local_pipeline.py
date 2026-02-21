@@ -89,6 +89,8 @@ def run_pipeline(file_path):
             logger.info(f"Invoice: {order.invoice_number}")
             logger.info(f"Supplier ID: {order.supplier_code}")
             logger.info(f"Cost: {order.processing_cost_ils:.3f} ₪ (${order.processing_cost:.6f})")
+            if result.phase1_reasoning and i == 0:
+                logger.info(f"🔍 Phase 1 Reasoning: {result.phase1_reasoning}")
             if order.notes:
                 logger.info(f"📝 AI Notes: {order.notes}")
             if order.math_reasoning:

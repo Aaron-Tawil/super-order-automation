@@ -508,11 +508,11 @@ def detect_supplier(
             }
         })
 
-        return (supplier_code, confidence, cost, response_metadata, result, detected_email, detected_id)
+        return (supplier_code, confidence, cost, reasoning, result, detected_email, detected_id)
 
     except Exception as e:
         logger.error(f"Error in supplier detection: {e}")
-        return ("UNKNOWN", 0.0, 0.0, {}, {}, None, None)
+        return ("UNKNOWN", 0.0, 0.0, "", {}, None, None)
 
 
 def extract_invoice_data(
