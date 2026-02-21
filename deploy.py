@@ -349,7 +349,7 @@ def check_pubsub_topics():
     print_step(3.5, 5, "Checking Pub/Sub topics")
     topics = [PUBSUB_TOPIC, INGESTION_TOPIC]
     
-    existing_topics_out = run_command(f"gcloud pubsub topics list --project={PROJECT_ID} --format='value(name)'", capture=True)
+    existing_topics_out = run_command(f'gcloud pubsub topics list --project={PROJECT_ID} --format="value(name)"', capture=True)
     existing_topics = [t.split('/')[-1] for t in existing_topics_out.split('\n')] if existing_topics_out else []
 
     for topic in topics:
