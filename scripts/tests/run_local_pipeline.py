@@ -16,6 +16,7 @@ from src.export.excel_generator import generate_excel_from_order
 from src.export.new_items_generator import filter_new_items_from_order, generate_new_items_excel
 from src.extraction.vertex_client import detect_supplier, init_client
 from src.shared.ai_cost import calculate_cost_ils, get_usd_to_ils_rate
+from src.shared.utils import get_mime_type
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -57,9 +58,8 @@ def run_pipeline(file_path):
         "body": "Please find attached."
     }
     
-    mime_type = "application/pdf" if file_path.lower().endswith(".pdf") else "application/octet-stream"
-    if file_path.lower().endswith(".xlsx"):
-         mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    mime_type = get_mime_type(file_path)
+    logger.info(f"Using MIME type: {mime_type}")
     
     result = pipeline.run_pipeline(
         file_path=file_path,
@@ -79,7 +79,9 @@ def run_pipeline(file_path):
             p2_path = os.path.join(output_dir, f"phase2_extraction_trial_{trial}.json")
             with open(p2_path, "w", encoding="utf-8") as f:
                 json.dump(response, f, indent=4, ensure_ascii=False)
-            logger.info(f"📄 Saved Phase 2 Raw Response (Trial {trial}): {p2_path}")
+            
+            error_status = " (INVALID/ERROR)" if "error" in response else ""
+            logger.info(f"📄 Saved Phase 2 Raw Response (Trial {trial}){error_status}: {p2_path}")
 
     if result.orders:
         for i, order in enumerate(result.orders):
@@ -87,6 +89,12 @@ def run_pipeline(file_path):
             logger.info(f"Invoice: {order.invoice_number}")
             logger.info(f"Supplier ID: {order.supplier_code}")
             logger.info(f"Cost: {order.processing_cost_ils:.3f} ₪ (${order.processing_cost:.6f})")
+            if order.notes:
+                logger.info(f"📝 AI Notes: {order.notes}")
+            if order.math_reasoning:
+                logger.info(f"💡 Math Reasoning: {order.math_reasoning}")
+            if order.qty_reasoning:
+                logger.info(f"💡 Qty Reasoning: {order.qty_reasoning}")
 
             # --- Generate Outputs ---
             safe_invoice = "".join([c if c.isalnum() else '_' for c in str(order.invoice_number)])

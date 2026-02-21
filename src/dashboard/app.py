@@ -191,6 +191,7 @@ if not st.session_state.get("from_email"):
                             "added_items_barcodes": result.added_barcodes,
                             "new_items": result.new_items_data,  # For dashboard new items section
                             "from_manual_upload": True,
+                            "phase1_reasoning": result.phase1_reasoning,
                         }
 
                         st.session_state["extracted_data"] = order.model_dump()
@@ -232,6 +233,24 @@ if "extracted_data" in st.session_state:
     cost_ils = data.get("processing_cost_ils", 0.0)
     cost_usd = data.get("processing_cost", 0.0)
     c3.metric("עלות AI (משוער)", f"{cost_ils:.3f} ₪")
+    
+    # AI Notes & Reasoning
+    if data.get("notes") or data.get("math_reasoning") or data.get("qty_reasoning"):
+        with st.expander(get_text("ai_notes_title"), expanded=True):
+            if data.get("notes"):
+                st.markdown(f"**{get_text('notes') or 'הערות'}:**\n{data['notes']}")
+            
+            if data.get("math_reasoning"):
+                st.info(f"**{get_text('ai_reasoning_title')} (מתמטי):**\n{data['math_reasoning']}")
+            
+            if data.get("qty_reasoning"):
+                st.info(f"**{get_text('ai_reasoning_title')} (כמותי):**\n{data['qty_reasoning']}")
+        
+        # Display Phase 1 Reasoning if available in session metadata
+        metadata = st.session_state.get("session_metadata", {})
+        if metadata.get("phase1_reasoning"):
+            with st.expander(f"{get_text('ai_reasoning_title')} (זיהוי ספק)", expanded=False):
+                st.markdown(metadata["phase1_reasoning"])
 
     # Line Items Editor
     st.subheader(get_text("editor_title"))

@@ -23,3 +23,6 @@ BLACKLIST_IDS = [
     "515020394",
     "029912221",
 ]
+
+# Company names to ignore during supplier detection (our own company)
+BLACKLIST_NAMES = ["סופר הום", "שטובה אינטרנשיונל"]

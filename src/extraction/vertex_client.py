@@ -33,6 +33,7 @@ from src.shared.config import settings
 from src.shared.constants import MAX_RETRIES, VALIDATION_TOLERANCE, VAT_RATE
 from src.shared.logger import get_logger
 from src.shared.models import ExtractedOrder, MultiOrderResponse
+from src.shared.utils import get_mime_type, is_excel_file
 
 logger = get_logger(__name__)
 
@@ -427,8 +428,20 @@ def detect_supplier(
     if invoice_file_path and os.path.exists(invoice_file_path):
         logger.info(f"Including invoice file in Phase 1: {invoice_file_path}")
 
+        # Detect MIME if not provided
+        if not invoice_mime_type:
+            invoice_mime_type = get_mime_type(invoice_file_path)
+
         # Handle different file types
-        if invoice_mime_type and "pdf" in invoice_mime_type.lower():
+        if is_excel_file(invoice_mime_type):
+            # Excel file - convert to CSV text
+            try:
+                df = read_excel_safe(invoice_file_path)
+                excel_csv = df.to_csv(index=False)
+                invoice_context = f"INVOICE DATA (Excel converted to CSV):\n{excel_csv}"
+            except Exception as e:
+                logger.warning(f"Warning: Could not read Excel for Phase 1: {e}")
+        elif "pdf" in invoice_mime_type.lower():
             # PDF file - upload as bytes
             try:
                 with open(invoice_file_path, "rb") as f:
@@ -437,24 +450,9 @@ def detect_supplier(
                 invoice_context = "[Invoice PDF attached above]"
             except Exception as e:
                 logger.warning(f"Warning: Could not attach PDF: {e}")
-
-        elif invoice_mime_type and ("excel" in invoice_mime_type.lower() or "spreadsheet" in invoice_mime_type.lower()):
-            # Excel file - convert to CSV text
-            try:
-                df = read_excel_safe(invoice_file_path)
-                excel_csv = df.to_csv(index=False)
-                invoice_context = f"INVOICE DATA (Excel converted to CSV):\n{excel_csv}"
-            except Exception as e:
-                logger.warning(f"Warning: Could not read Excel for Phase 1: {e}")
-
         else:
-            # Unknown type - try to read as text or Excel
-            try:
-                df = pd.read_excel(invoice_file_path)
-                excel_csv = df.to_csv(index=False)
-                invoice_context = f"INVOICE DATA (Excel converted to CSV):\n{excel_csv}"
-            except Exception:
-                logger.warning(f"Warning: Unknown file type for Phase 1: {invoice_mime_type}")
+            # Fallback for other types or unknown
+            logger.warning(f"Warning: Unknown or unsupported file type for Phase 1: {invoice_mime_type}. Attempting default PDF handling.")
 
     prompt = get_supplier_detection_prompt(filtered_email, invoice_context, suppliers_csv)
 
@@ -563,37 +561,35 @@ def extract_invoice_data(
 
     # Auto-detect MIME type if not provided
     if mime_type is None:
-        ext = os.path.splitext(file_path.lower())[1]
-        mime_types = {
-            ".pdf": "application/pdf",
-            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            ".xls": "application/vnd.ms-excel",
-        }
-        mime_type = mime_types.get(ext, "application/pdf")
+        mime_type = get_mime_type(file_path)
+        logger.info(f"Auto-detected MIME type for Phase 2: {mime_type}")
 
     try:
-        with open(file_path, "rb") as f:
-            file_content = f.read()
+        if is_excel_file(mime_type):
+            # Excel file - convert to CSV text
+            try:
+                df = read_excel_safe(file_path)
+                # Convert to CSV string - huge context saving vs raw binary
+                csv_text = df.to_csv(index=False)
+                file_part = types.Part.from_text(text=csv_text)
+                logger.info("Excel file converted to CSV for Phase 2.")
+            except Exception as e:
+                logger.error(f"Error converting Excel file: {e}")
+                return [], 0.0, {}, {}
+        elif "pdf" in mime_type.lower() or "image" in mime_type.lower():
+            # Standard supported binary types
+            with open(file_path, "rb") as f:
+                file_content = f.read()
+            file_part = types.Part.from_bytes(data=file_content, mime_type=mime_type)
+        else:
+            # Fallback or unknown
+            logger.warning(f"Warning: Sending unknown mime-type {mime_type} as PDF fallback.")
+            with open(file_path, "rb") as f:
+                file_content = f.read()
+            file_part = types.Part.from_bytes(data=file_content, mime_type="application/pdf")
     except FileNotFoundError:
         logger.error(f"Error: File not found at {file_path}")
         return [], 0.0, {}, {}
-
-    # Handle Excel files by converting to text (CSV)
-    excel_mime_types = ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]
-    file_part = None
-
-    if mime_type in excel_mime_types:
-        try:
-            df = read_excel_safe(file_path)
-            # Convert to CSV string - huge context saving vs raw binary
-            csv_text = df.to_csv(index=False)
-            file_part = types.Part.from_text(text=csv_text)
-        except Exception as e:
-            logger.error(f"Error converting Excel file: {e}")
-            return [], 0.0, {}, {}
-    else:
-        # Default: Send as raw bytes (PDF, Image)
-        file_part = types.Part.from_bytes(data=file_content, mime_type=mime_type)
 
     # RETRY CONFIG: Enable Code Execution for retries
     current_tools = None
@@ -646,15 +642,13 @@ def extract_invoice_data(
         # Clean formatting
         raw_json = raw_json.replace("```json", "").replace("```", "").strip()
 
-
-
         # Log for cloud logging
         logger.info(f"✅ Phase 2 Finished (Model={model_name}). JSON received.")
         
+        parsed_json = {}
         try:
             parsed_json = json.loads(raw_json)
             # Log as structured data for advanced filtering
-            # Note: with StructuredLogHandler, extra fields are added to jsonPayload
             logger.info("AI Model Response (Phase 2 - Structured)", extra={
                 "json_fields": {
                     "json_payload": parsed_json,
@@ -665,23 +659,32 @@ def extract_invoice_data(
             })
         except json.JSONDecodeError:
             logger.error(f"❌ AI returned invalid JSON: {raw_json[:200]}...")
+            parsed_json = {"error": "Invalid JSON", "raw_text": raw_json}
 
-        multi_order = MultiOrderResponse.model_validate_json(raw_json)
-
-        # Calculate Cost
+        # Calculate Cost - Move this up so we have it even if validation fails
         usage_metadata = {}
         cost = 0.0
+        response_metadata = {}
         try:
             response_metadata = _extract_response_metadata(response)
             usage_metadata = response_metadata.get("usage", {})
             cost = calculate_cost(model_name, usage_metadata)
-        except Exception as e:
-             logger.warning(f"Failed to calculate cost for Phase 2: {e}")
+        except Exception as cost_err:
+             logger.warning(f"Failed to calculate cost for Phase 2: {cost_err}")
 
         logger.warning(f"Phase 2 Cost: ${cost:.6f}")
 
-        return multi_order.orders, cost, response_metadata, parsed_json
+        try:
+            multi_order = MultiOrderResponse.model_validate_json(raw_json)
+            return multi_order.orders, cost, response_metadata, parsed_json
+        except Exception as validation_err:
+            logger.error(f"❌ Pydantic validation failed: {validation_err}")
+            # Ensure we still return the raw response even if Pydantic fails
+            if "error" not in parsed_json:
+                parsed_json["error"] = f"Validation failed: {str(validation_err)}"
+            return [], cost, response_metadata, parsed_json
 
     except Exception as e:
-        logger.error(f"Gemini API or Parsing failed: {e}")
-        raise e
+        logger.error(f"Gemini API call failed: {e}")
+        # Return what we can on complete failure
+        return [], 0.0, {}, {"error": str(e)}

@@ -141,7 +141,8 @@ def process_order_event(cloud_event: Any):
                 session_id = create_session(order, metadata={
                     "subject": event.email_metadata.subject,
                     "sender": event.email_metadata.sender,
-                    "filename": event.filename
+                    "filename": event.filename,
+                    "phase1_reasoning": result.phase1_reasoning
                 })
                 logger.info(f"✅ Order saved to Firestore (ID: {doc_id}). Session created: {session_id}")
                 
@@ -176,6 +177,19 @@ def process_order_event(cloud_event: Any):
                         msg_body += f"<li><span style='color: orange;'>{warn.strip()}</span></li>"
                 
                 msg_body += "</ul>"
+
+                # AI Notes & Reasoning
+                if order.notes or order.math_reasoning or order.qty_reasoning:
+                    msg_body += "<div style='background-color: #f9f9f9; padding: 10px; border-radius: 5px; margin: 10px 0;'>"
+                    if order.notes:
+                        msg_body += f"<strong>{get_text('ai_notes_title')}</strong><br>{order.notes}<br>"
+                    
+                    if order.math_reasoning:
+                        msg_body += f"<p><strong>{get_text('ai_reasoning_title')} (מתמטי):</strong><br>{order.math_reasoning}</p>"
+                    
+                    if order.qty_reasoning:
+                        msg_body += f"<p><strong>{get_text('ai_reasoning_title')} (כמותי):</strong><br>{order.qty_reasoning}</p>"
+                    msg_body += "</div>"
                 
                 # Edit Link with Session
                 edit_url = f"{settings.WEB_UI_URL}/?session={session_id}"

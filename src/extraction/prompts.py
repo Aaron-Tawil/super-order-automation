@@ -1,6 +1,7 @@
 import json
 
 from src.extraction.schemas import calc_response_schema, raw_response_schema
+from src.shared.config import settings
 from src.shared.constants import VALIDATION_TOLERANCE, VAT_RATE
 
 
@@ -31,18 +32,24 @@ INSTRUCTIONS:
 2. Match these identifiers to the supplier database.
 3. The supplier "קוד" (code) column is what you need to return.
 4. Prioritize matches from the invoice over email if there's a conflict.
-5. If you find a clear match, return the supplier code.
-6. If you cannot find a confident match, return "UNKNOWN".
+5. IGNORE OUR COMPANY: Never match ourselves as a supplier.
+   - Ignore IDs (H.P./Osek Murshe): {", ".join(settings.blacklist_ids)}
+   - Ignore Company Names: {", ".join(settings.blacklist_names)}
+   - If a document contains both a supplier and our name (as the bill-to party), ALWAYS pick the OTHER party as the supplier.
+6. If you find a clear match, return the supplier code.
+7. If you cannot find a confident match, return "UNKNOWN".
 
-7. Extract the SUPPLIER'S EMAIL ADDRESS if found in the document or email body.
+8. Extract the SUPPLIER'S EMAIL ADDRESS if found in the document or email body.
    - Return it in the `detected_email` field.
    - If multiple emails found, prefer the one in the invoice header or footer.
    - If no email found, return null.
 
-8. Extract the SUPPLIER'S GLOBAL ID (Tax ID / BN / Osek Murshe / H.P) if found.
+9. Extract the SUPPLIER'S GLOBAL ID (Tax ID / BN / Osek Murshe / H.P) if found.
    - Return it in the `detected_id` field.
    - It usually looks like a 9-digit number.
    - If not found, return null.
+
+10. LANGUAGE REQUIREMENT: Return the `reasoning` field in Hebrew.
 
 Output must strictly follow the defined schema.
 """
@@ -96,7 +103,7 @@ def _get_invoice_extraction_prompt_trial_1(email_context: str, supplier_instruct
     1. COLUMN IDENTIFICATION: Look closely at the header columns to determine which field is 'quantity' (כמות), 'discount' (הנחה), and 'price' (מחיר). Do NOT be confused by other columns like "Total per row" (סה"כ), "Net total" or other calculated fields.
     2. EXTRACT EVERY SINGLE LINE ITEM. Do not summarize.
     3. REPEATING ITEMS: If the same product appears in multiple rows, EXTRACT BOTH ROWS SEPARATELY.
-    4. 'vat_status': Check columns for "Price inc. VAT" / "כולל מע"מ" (INCLUDED) or "Price exc. VAT" / "לפני מע"מ" (EXCLUDED). if not stated - assume EXCLUDED.
+    4. 'vat_status': Check columns for "Price inc. VAT" / "כולל מע"מ" (INCLUDED) or "Price exc. VAT" / "לפני מע"מ" (EXCLUDED). if not stated - assume EXCLUDED. defaults to EXCLUDED.
        - IMPORTANT: Just REPORT whether the price column includes VAT or not. Do NOT convert the price yourself.
     5. GLOBAL DISCOUNT: Look for a general discount at the BOTTOM of the invoice (e.g., "הנחה: 15.25%", "הנחה כללית", "discount").
        - If a PERCENTAGE is shown (e.g., "15.25 %"), extract it into 'global_discount_percentage'.
@@ -127,7 +134,10 @@ def _get_invoice_extraction_prompt_trial_1(email_context: str, supplier_instruct
        - 'document_total_quantity': Extract TOTAL QUANTITY ONLY if explicitly printed on the document
          (e.g., "סה"כ כמות: 510"). If no total quantity line exists, return null. Do NOT sum up quantities yourself.
 
-    8. 'notes': Use this field for any internal notes, explanations, or comments about this order. This helps keep the data fields clean.
+    8. 'notes': Use this field for any AI-GENERATED observations, explanations, or internal comments about your extraction process.
+       - IMPORTANT: Do NOT copy general notes, shipping instructions, or terms already printed on the supplier's invoice. This field is for YOUR thoughts, not for document text.
+       - If no specific observations are needed, leave this field as null or an empty string.
+       - LANGUAGE REQUIREMENT: Return this field in Hebrew.
     
     *** IMPORTANT: BARCODE EXTRACTION ***
     - Look for INTERNATIONAL BARCODE (EAN/GTIN), typically 13 digits.
@@ -188,7 +198,10 @@ def _get_invoice_extraction_prompt_trial_2(email_context: str, supplier_instruct
        - IMPORTANT: This field must represent the total AFTER any global discount but BEFORE VAT.
        - *** BIG EXCEPTION: *** If the SUPPLIER-SPECIFIC INSTRUCTIONS mention a global discount that is NOT explicitly reflected in the document's printed totals, you MUST recalculate 'document_total_without_vat' to reflect it.
     8. 'document_total_quantity': COPY the TOTAL QUANTITY ONLY if explicitly printed on the document.
-    9. 'notes': Use this field for any internal notes, explanations, or comments about this order. This is the only place where non-structured commentary is allowed.
+    9. 'notes': Use this field for any AI-GENERATED observations, explanations, or internal comments about your extraction process or discrepancies you found.
+       - IMPORTANT: Do NOT copy general notes, shipping instructions, or terms already printed on the supplier's invoice. This field is for YOUR thoughts, not for document text.
+       - If no specific observations are needed, leave this field as null or an empty string.
+    10. LANGUAGE REQUIREMENT: All text fields intended for human reading (`notes`, `math_reasoning`, `qty_reasoning`) MUST be returned in Hebrew.
 
     *** MANDATORY MATH VERIFICATION (CODE EXECUTION) ***
     YOU MUST USE PYTHON CODE TO CALCULATE AND VERIFY THE TOTALS BEFORE ANSWERING.
@@ -198,8 +211,10 @@ def _get_invoice_extraction_prompt_trial_2(email_context: str, supplier_instruct
     4. Provide the boolean result in `is_math_valid`.
        - IMPORTANT: If the difference between your calculated total and the `document_total_with_vat` is less than or equal to {VALIDATION_TOLERANCE}, you MUST mark `is_math_valid` as true.
     5. If the math does NOT balance (difference > {VALIDATION_TOLERANCE}), explain exactly why in `math_reasoning` (e.g., "Missing a 10 NIS delivery fee", "Discount applied to wrong items").
+       - IMPORTANT: Write this explanation in Hebrew.
     6. Compare your sum of quantities to the `document_total_quantity`.
     7. Provide the boolean result in `is_qty_valid` and any explanation in `qty_reasoning`.
+       - IMPORTANT: Write this explanation in Hebrew.
     8. AFTER your code execution is finished and verified, output the FINAL JSON result.
     
     CRITICAL: Output ONLY the final JSON object. Do NOT include any preamble, conversational text, or explanations outside the JSON block.

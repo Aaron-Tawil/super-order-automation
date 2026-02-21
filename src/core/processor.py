@@ -7,6 +7,7 @@ from src.extraction import vertex_client
 from src.shared.constants import MAX_RETRIES, VALIDATION_TOLERANCE, VAT_RATE
 from src.shared.logger import get_logger
 from src.shared.models import ExtractedOrder, LineItem, MultiOrderResponse
+from src.shared.utils import get_mime_type
 
 # Configure logger
 logger = get_logger(__name__)
@@ -35,13 +36,7 @@ class OrderProcessor:
         """
         # Auto-detect MIME type if not provided
         if mime_type is None:
-            ext = os.path.splitext(file_path.lower())[1]
-            mime_types = {
-                ".pdf": "application/pdf",
-                ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                ".xls": "application/vnd.ms-excel",
-            }
-            mime_type = mime_types.get(ext, "application/pdf")
+            mime_type = get_mime_type(file_path)
             logger.info(f"Auto-detected MIME type: {mime_type}")
 
         attempt = 0
@@ -75,7 +70,10 @@ class OrderProcessor:
                 return [], total_cost, all_raw_responses, {}
 
             if not orders:
-                logger.warning("⚠️ No orders returned from extraction.")
+                logger.warning(f"⚠️ No orders returned from extraction (Attempt {attempt + 1}).")
+                if attempt < MAX_RETRIES:
+                    attempt += 1
+                    continue
                 return [], total_cost, all_raw_responses, final_metadata
 
             logger.info(f"✅ LLM returned {len(orders)} order(s). Applying post-processing (Trial {trial_version})...")

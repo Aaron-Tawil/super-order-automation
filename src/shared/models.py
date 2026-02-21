@@ -97,6 +97,7 @@ class ExtractedOrder(BaseModel):
     math_reasoning: str | None = Field(None, description="Explanation for math discrepancy if any")
     is_qty_valid: bool | None = Field(None, description="Did the LLM verify that the calculated quantities match?")
     qty_reasoning: str | None = Field(None, description="Explanation for quantity discrepancy if any")
+    notes: str | None = Field(None, description="General AI-generated notes or observations about the order")
 
     # Metadata from API
     ai_metadata: dict | None = Field(default_factory=dict, description="Metadata from Vertex AI extraction")

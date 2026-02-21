@@ -124,11 +124,8 @@ class IngestionService:
                 # Find Attachments
                 parts = msg["payload"].get("parts", [])
                 found_attachments = []
-                SUPPORTED_EXTENSIONS = {
-                    ".pdf": "application/pdf",
-                    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    ".xls": "application/vnd.ms-excel",
-                }
+                from src.shared.utils import SUPPORTED_MIME_TYPES
+                SUPPORTED_EXTENSIONS = SUPPORTED_MIME_TYPES
 
                 for part in parts:
                     filename = part.get("filename", "")

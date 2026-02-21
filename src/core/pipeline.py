@@ -21,6 +21,7 @@ class PipelineResult(BaseModel):
     supplier_name: str = "Unknown"
     confidence: float = 0.0
     detection_method: str = "none"
+    phase1_reasoning: str | None = None
     
     total_cost_usd: float = 0.0
     total_cost_ils: float = 0.0
@@ -79,7 +80,7 @@ class ExtractionPipeline:
             logger.info("⚠️ Local detection failed. Proceeding to Vertex AI...")
             logger.info(">>> PHASE 1: Supplier Detection (Vertex AI)...")
             
-            detected_code, confidence, phase1_cost, _, raw_data_p1, detected_email, detected_id = detect_supplier(
+            detected_code, confidence, phase1_cost, reasoning, raw_data_p1, detected_email, detected_id = detect_supplier(
                 email_body=email_context,
                 invoice_file_path=file_path,
                 invoice_mime_type=mime_type
@@ -90,6 +91,7 @@ class ExtractionPipeline:
             result.confidence = confidence
             result.detection_method = "vertex_ai"
             result.raw_phase1_response = raw_data_p1
+            result.phase1_reasoning = reasoning
         
         
         # --- Auto-Learning: Add detected email & ID to supplier ---
