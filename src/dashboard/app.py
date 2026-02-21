@@ -236,16 +236,12 @@ if "extracted_data" in st.session_state:
     
     # AI Insights Section
     metadata = st.session_state.get("session_metadata", {})
-    p1_reasoning = metadata.get("phase1_reasoning")
     p2_notes = data.get("notes")
     math_reasoning = data.get("math_reasoning")
     qty_reasoning = data.get("qty_reasoning")
     
-    if p1_reasoning or p2_notes or math_reasoning or qty_reasoning:
+    if p2_notes or math_reasoning or qty_reasoning:
         with st.expander("🔍 תובנות והסברי AI", expanded=True):
-            if p1_reasoning:
-                st.info(f"**זיהוי ספק:** {p1_reasoning}")
-            
             if p2_notes:
                 st.markdown(f"**הערות חילוץ:**\n{p2_notes}")
             
