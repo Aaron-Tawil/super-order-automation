@@ -138,7 +138,7 @@ def _get_invoice_extraction_prompt_trial_1(email_context: str, supplier_instruct
        - IMPORTANT: Do NOT copy general notes, shipping instructions, or terms already printed on the supplier's invoice. This field is for YOUR thoughts, not for document text.
        - If no specific observations are needed, leave this field as null or an empty string.
        - LANGUAGE REQUIREMENT: Return this field in Hebrew.
-    
+   
     *** IMPORTANT: BARCODE EXTRACTION ***
     - Look for INTERNATIONAL BARCODE (EAN/GTIN), typically 13 digits.
     - Prefer 12-14 digit numbers over short internal codes.
@@ -202,7 +202,7 @@ def _get_invoice_extraction_prompt_trial_2(email_context: str, supplier_instruct
        - IMPORTANT: Do NOT copy general notes, shipping instructions, or terms already printed on the supplier's invoice. This field is for YOUR thoughts, not for document text.
        - If no specific observations are needed, leave this field as null or an empty string.
     10. LANGUAGE REQUIREMENT: All text fields intended for human reading (`notes`, `math_reasoning`, `qty_reasoning`) MUST be returned in Hebrew.
-
+   
     *** MANDATORY MATH VERIFICATION (CODE EXECUTION) ***
     YOU MUST USE PYTHON CODE TO CALCULATE AND VERIFY THE TOTALS BEFORE ANSWERING.
     1. Write Python code to sum up your calculated line items: `sum(quantity * final_net_price)`.

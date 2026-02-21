@@ -234,23 +234,26 @@ if "extracted_data" in st.session_state:
     cost_usd = data.get("processing_cost", 0.0)
     c3.metric("עלות AI (משוער)", f"{cost_ils:.3f} ₪")
     
-    # AI Notes & Reasoning
-    if data.get("notes") or data.get("math_reasoning") or data.get("qty_reasoning"):
-        with st.expander(get_text("ai_notes_title"), expanded=True):
-            if data.get("notes"):
-                st.markdown(f"**{get_text('notes') or 'הערות'}:**\n{data['notes']}")
+    # AI Insights Section
+    metadata = st.session_state.get("session_metadata", {})
+    p1_reasoning = metadata.get("phase1_reasoning")
+    p2_notes = data.get("notes")
+    math_reasoning = data.get("math_reasoning")
+    qty_reasoning = data.get("qty_reasoning")
+    
+    if p1_reasoning or p2_notes or math_reasoning or qty_reasoning:
+        with st.expander("🔍 תובנות והסברי AI", expanded=True):
+            if p1_reasoning:
+                st.info(f"**זיהוי ספק:** {p1_reasoning}")
             
-            if data.get("math_reasoning"):
-                st.info(f"**{get_text('ai_reasoning_title')} (מתמטי):**\n{data['math_reasoning']}")
+            if p2_notes:
+                st.markdown(f"**הערות חילוץ:**\n{p2_notes}")
             
-            if data.get("qty_reasoning"):
-                st.info(f"**{get_text('ai_reasoning_title')} (כמותי):**\n{data['qty_reasoning']}")
-        
-        # Display Phase 1 Reasoning if available in session metadata
-        metadata = st.session_state.get("session_metadata", {})
-        if metadata.get("phase1_reasoning"):
-            with st.expander(f"{get_text('ai_reasoning_title')} (זיהוי ספק)", expanded=False):
-                st.markdown(metadata["phase1_reasoning"])
+            if math_reasoning:
+                st.warning(f"**הסבר חישוב (מתמטי):**\n{math_reasoning}")
+            
+            if qty_reasoning:
+                st.warning(f"**הסבר כמויות:**\n{qty_reasoning}")
 
     # Line Items Editor
     st.subheader(get_text("editor_title"))

@@ -75,6 +75,7 @@ class ExtractionPipeline:
              result.supplier_code = detected_code
              result.confidence = confidence
              result.detection_method = detection_method
+             result.phase1_reasoning = f"זוהה מקומית לפי {detection_method} (ביטחון: {confidence:.2f})"
         else:
             # --- PHASE 1: AI Supplier Detection ---
             logger.info("⚠️ Local detection failed. Proceeding to Vertex AI...")
