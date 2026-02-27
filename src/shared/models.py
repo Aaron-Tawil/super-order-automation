@@ -19,7 +19,6 @@ class LineItem(BaseModel):
 
     # Financials
     raw_unit_price: float | None = Field(0.0, description="Price per unit as listed on the line")
-    vat_status: VatStatus = Field(VatStatus.EXCLUDED, description="Is VAT included in the raw_unit_price?")
     discount_percentage: float = Field(0.0, description="Line-specific discount", ge=0, le=100)
 
     # Promotion handling (e.g., "11+1 free")
@@ -52,7 +51,7 @@ class LineItem(BaseModel):
     @model_validator(mode="after")
     def validate_net_price(self) -> "LineItem":
         # Sanity check: Net price shouldn't normally be higher than raw price
-        if self.vat_status == VatStatus.INCLUDED:
+        if self.final_net_price and self.raw_unit_price:
             if self.final_net_price > self.raw_unit_price:
                 pass  # Warning: Logic for specific edge cases might go here
         return self
@@ -62,6 +61,7 @@ class ExtractedOrder(BaseModel):
     # Note: supplier_name removed - we get supplier from Phase 1 detection
     invoice_number: str | None = None
     currency: str = "ILS"
+    vat_status: VatStatus = Field(VatStatus.EXCLUDED, description="Is VAT included in the printed prices?")
 
     # Validation Warnings
     warnings: list[str] = Field(default_factory=list, description="List of warnings or errors found during validation")

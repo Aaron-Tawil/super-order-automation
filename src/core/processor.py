@@ -101,6 +101,22 @@ class OrderProcessor:
                     logger.info(f"Filtered out {original_count - filtered_count} lines with 0 quantity.")
 
                 # Step 3: Validation
+
+                # 3a. Integer Quantity Check (Common sense check)
+                for item in order.line_items:
+                    qty = item.quantity or 0.0
+                    if not float(qty).is_integer():
+                        msg = (
+                            f"Quantity Validation Error: Line item '{item.description}' has a non-integer quantity ({qty}). "
+                            "This suggests the AI swapped the 'Price' and 'Quantity' columns."
+                        )
+                        logger.warning(f"⚠️ {msg}")
+                        order.warnings.append(msg)
+                        if trial_version == 1:
+                            critical_failure_found = True
+                        break
+
+                # 3b. Total Amount Validation
                 is_valid_total, calc_total, diff_total = self._validate_totals(order, trial_version)
 
                 if not is_valid_total:
@@ -115,7 +131,7 @@ class OrderProcessor:
                 else:
                     logger.warning(f"✅ Validation Passed for Order {i+1}! Diff: {diff_total:.2f}")
 
-                # Quantity Validation
+                # 3c. Bulk Quantity Validation (if document total exists)
                 is_valid_qty, calc_qty, diff_qty = self._validate_quantity(order, trial_version)
                 if not is_valid_qty:
                     reason_msg = f" (Reason: {order.qty_reasoning})" if order.qty_reasoning else ""
@@ -188,7 +204,7 @@ class OrderProcessor:
                 item.raw_unit_price,
                 item.discount_percentage,
                 global_discount_pct,
-                item.vat_status.value,
+                order.vat_status.value,
             )
 
         # Pass 2: Distribute lump-sum discount proportionally ONLY if no percentage was provided

@@ -9,16 +9,16 @@ raw_line_item_schema = {
         "quantity": {"type": "NUMBER", "nullable": True},
         # Raw Data ONLY
         "raw_unit_price": {"type": "NUMBER", "nullable": True},
-        "vat_status": {"type": "STRING", "enum": ["INCLUDED", "EXCLUDED"]},
         "discount_percentage": {"type": "NUMBER", "nullable": True},
     },
-    "required": ["description", "vat_status"],
+    "required": ["description"],
 }
 
 raw_order_schema = {
     "type": "OBJECT",
     "properties": {
         "invoice_number": {"type": "STRING", "nullable": True},
+        "vat_status": {"type": "STRING", "enum": ["INCLUDED", "EXCLUDED"]},
         # Invoice-level financials
         "global_discount_percentage": {"type": "NUMBER", "nullable": True},
         "total_invoice_discount_amount": {"type": "NUMBER", "nullable": True},
@@ -31,7 +31,7 @@ raw_order_schema = {
             "items": raw_line_item_schema,
         },
     },
-    "required": ["line_items"],
+    "required": ["line_items", "vat_status"],
 }
 
 raw_response_schema = {

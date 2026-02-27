@@ -101,10 +101,12 @@ def _get_invoice_extraction_prompt_trial_1(email_context: str, supplier_instruct
     
     CRITICAL EXTRACTION RULES:
     1. COLUMN IDENTIFICATION: Look closely at the header columns to determine which field is 'quantity' (כמות), 'discount' (הנחה), and 'price' (מחיר). Do NOT be confused by other columns like "Total per row" (סה"כ), "Net total" or other calculated fields.
+       - CRITICAL: The 'quantity' (כמות) column should almost always contain INTEGER values. If you see decimal values (e.g. 29.90, 15.50) in what you think is the quantity column, it is LIKELY the 'price' column.
+       - COMMON SENSE: Use common sense to avoid swapping columns due to OCR shifts. Total Amount = Quantity * Price. If swapping them results in the same total, prioritize the column that contains integers as the 'quantity'.
     2. EXTRACT EVERY SINGLE LINE ITEM. Do not summarize.
     3. REPEATING ITEMS: If the same product appears in multiple rows, EXTRACT BOTH ROWS SEPARATELY.
-    4. 'vat_status': Check columns for "Price inc. VAT" / "כולל מע"מ" (INCLUDED) or "Price exc. VAT" / "לפני מע"מ" (EXCLUDED). if not stated - assume EXCLUDED. defaults to EXCLUDED.
-       - IMPORTANT: Just REPORT whether the price column includes VAT or not. Do NOT convert the price yourself.
+    4. 'vat_status': Determine this for the ENTIRE INVOICE. Check columns for "Price inc. VAT" / "כולל מע"מ" (INCLUDED) or "Price exc. VAT" / "לפני מע"מ" (EXCLUDED). if not stated - assume EXCLUDED. defaults to EXCLUDED.
+       - IMPORTANT: Just REPORT whether the printed prices include VAT or not in the 'vat_status' field at the order level. Do NOT convert the price yourself.
     5. GLOBAL DISCOUNT: Look for a general discount at the BOTTOM of the invoice (e.g., "הנחה: 15.25%", "הנחה כללית", "discount").
        - If a PERCENTAGE is shown (e.g., "15.25 %"), extract it into 'global_discount_percentage'.
        - If a monetary AMOUNT is shown (e.g., "648.35"), extract it into 'total_invoice_discount_amount'.
@@ -119,7 +121,6 @@ def _get_invoice_extraction_prompt_trial_1(email_context: str, supplier_instruct
        - 'quantity': Extract the quantity for this line item.
        - 'barcode': Extract the barcode for this line item.
        - 'description': Extract the description for this line item.
-       - 'vat_status': Apply the VAT status determined above ("INCLUDED" or "EXCLUDED").
        
     
     7. DOCUMENT TOTALS (For Validation):
@@ -179,6 +180,8 @@ def _get_invoice_extraction_prompt_trial_2(email_context: str, supplier_instruct
     
     CRITICAL INSTRUCTIONS:
     1. COLUMN IDENTIFICATION: Look closely at the header columns to determine which field is 'quantity' (כמות), 'discount' (הנחה), and 'price' (מחיר). Do NOT be confused by other columns like "Total per row" (סה"כ שורה), "Net total" or other calculated fields.
+       - CRITICAL: The 'quantity' (כמות) column should almost always contain INTEGER values. If you see decimal values (e.g. 29.90, 15.50) in what you think is the quantity column, it is LIKELY the 'price' column.
+       - COMMON SENSE: Use common sense to avoid swapping columns due to OCR shifts. Total Amount = Quantity * Price. If swapping them results in the same total, prioritize the column that contains integers as the 'quantity'.
     2. EXTRACT EVERY SINGLE LINE ITEM. Do not summarize.
     3. REPEATING ITEMS: If the same product appears in multiple rows, EXTRACT BOTH ROWS SEPARATELY.
     4. `final_net_price` CALCULATION REQUIREMENT:
