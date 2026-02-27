@@ -581,21 +581,24 @@ def extract_invoice_data(
                 logger.error(f"Error converting Excel file: {e}")
                 return [], 0.0, {}, {}
         elif "pdf" in mime_type.lower():
-            # PDF file - Convert to images and send ONLY images
-            logger.info("Converting PDF to high-resolution images for Phase 2...")
+            # Phase 2 PDF Dual Input Hybrid: 
+            # Send BOTH the native PDF AND the high-res images.
+            logger.info("Preparing hybrid PDF + Image inputs for Phase 2...")
             with open(file_path, "rb") as f:
                 file_content = f.read()
             
+            # 1. ALWAYS attach the native PDF for fast structural processing
+            file_parts.append(types.Part.from_bytes(data=file_content, mime_type="application/pdf"))
+
+            # 2. Convert to images and attach them as visual validation layer
             image_bytes_list = convert_pdf_bytes_to_images(file_content, dpi=200)
             
             if image_bytes_list:
                 for img_bytes in image_bytes_list:
                     file_parts.append(types.Part.from_bytes(data=img_bytes, mime_type="image/png"))
-                logger.info(f"Successfully converted PDF into {len(image_bytes_list)} image parts.")
+                logger.info(f"Attached {len(image_bytes_list)} secondary image parts alongside the PDF.")
             else:
-                # Fallback to sending the raw PDF if conversion fails
-                logger.error("PDF to image conversion returned empty list. Falling back to native PDF.")
-                file_parts.append(types.Part.from_bytes(data=file_content, mime_type="application/pdf"))
+                logger.warning("PDF to image conversion returned empty. Proceeding with natively attached PDF only.")
         
         elif "image" in mime_type.lower():
             # Standard supported binary types (e.g. valid single images)

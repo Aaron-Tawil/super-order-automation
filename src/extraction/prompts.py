@@ -100,14 +100,21 @@ def _get_invoice_extraction_prompt_trial_1(email_context: str, supplier_instruct
     You MUST extract EACH order separately as its own object in the 'orders' list.
     
     CRITICAL EXTRACTION RULES:
-    1. COLUMN IDENTIFICATION: Look closely at the header columns to determine which field is 'quantity' (כמות), 'discount' (הנחה), and 'price' (מחיר). Do NOT be confused by other columns like "Total per row" (סה"כ), "Net total" or other calculated fields.
+    0. DUAL INPUT VALIDATION: You are receiving BOTH the original raw PDF and image renders of its pages. 
+       - Use the raw PDF text for fast structural processing.
+       - STRICTLY cross-reference with the provided images to confirm visual layout.
+       - The PDF OCR sometimes hallucinates or merges columns. The images are the ground truth for visual layout.
+    1. COLUMN IDENTIFICATION: Look closely at the header columns in the IMAGES to determine which field is 'quantity' (כמות), 'discount' (הנחה), and 'price' (מחיר). Do NOT be confused by other columns like "Total per row" (סה"כ), "Net total" or other calculated fields.
        - CRITICAL: The 'quantity' (כמות) column should almost always contain INTEGER values. If you see decimal values (e.g. 29.90, 15.50) in what you think is the quantity column, it is LIKELY the 'price' column.
        - COMMON SENSE: Use common sense to avoid swapping columns due to OCR shifts. Total Amount = Quantity * Price. If swapping them results in the same total, prioritize the column that contains integers as the 'quantity'.
     2. EXTRACT EVERY SINGLE LINE ITEM. Do not summarize.
     3. REPEATING ITEMS: If the same product appears in multiple rows, EXTRACT BOTH ROWS SEPARATELY.
-    4. 'vat_status': Determine this for the ENTIRE INVOICE. Check columns for "Price inc. VAT" / "כולל מע"מ" (INCLUDED) or "Price exc. VAT" / "לפני מע"מ" (EXCLUDED). if not stated - assume EXCLUDED. defaults to EXCLUDED.
+    4. 'vat_status': Look carefully at the price column headers and invoice totals. 
+       - If you see "כולל מע"מ" (including VAT) or "כולל" in the price headers, you MUST return "INCLUDED".
+       - If you see "לפני מע"מ" (excluding VAT) or it is not stated at all, return "EXCLUDED".
        - IMPORTANT: Just REPORT whether the printed prices include VAT or not in the 'vat_status' field at the order level. Do NOT convert the price yourself.
     5. GLOBAL DISCOUNT: Look for a general discount at the BOTTOM of the invoice (e.g., "הנחה: 15.25%", "הנחה כללית", "discount").
+       - CRITICAL: Do NOT confuse VAT (מע"מ) with a global discount! If you see 17% or 18% next to "מע"מ", it is NOT a discount percentage.
        - If a PERCENTAGE is shown (e.g., "15.25 %"), extract it into 'global_discount_percentage'.
        - If a monetary AMOUNT is shown (e.g., "648.35"), extract it into 'total_invoice_discount_amount'.
        - Extract BOTH if both are shown.
@@ -179,7 +186,11 @@ def _get_invoice_extraction_prompt_trial_2(email_context: str, supplier_instruct
     In this attempt, we need you to figure out the exact mathematical `final_net_price` for each item.
     
     CRITICAL INSTRUCTIONS:
-    1. COLUMN IDENTIFICATION: Look closely at the header columns to determine which field is 'quantity' (כמות), 'discount' (הנחה), and 'price' (מחיר). Do NOT be confused by other columns like "Total per row" (סה"כ שורה), "Net total" or other calculated fields.
+    0. DUAL INPUT VALIDATION: You are receiving BOTH the original raw PDF and image renders of its pages. 
+       - Use the raw PDF text for fast structural processing.
+       - STRICTLY cross-reference with the provided images to confirm visual layout.
+       - The PDF OCR sometimes hallucinates or merges columns. The images are the ground truth for visual layout.
+    1. COLUMN IDENTIFICATION: Look closely at the header columns in the IMAGES to determine which field is 'quantity' (כמות), 'discount' (הנחה), and 'price' (מחיר). Do NOT be confused by other columns like "Total per row" (סה"כ שורה), "Net total" or other calculated fields.
        - CRITICAL: The 'quantity' (כמות) column should almost always contain INTEGER values. If you see decimal values (e.g. 29.90, 15.50) in what you think is the quantity column, it is LIKELY the 'price' column.
        - COMMON SENSE: Use common sense to avoid swapping columns due to OCR shifts. Total Amount = Quantity * Price. If swapping them results in the same total, prioritize the column that contains integers as the 'quantity'.
     2. EXTRACT EVERY SINGLE LINE ITEM. Do not summarize.
