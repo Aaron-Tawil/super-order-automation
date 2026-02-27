@@ -56,7 +56,7 @@ def setup_logger(name: str) -> logging.Logger:
     formatter = logging.Formatter("%(asctime)s - [%(levelname)s] - %(name)s - %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
-    logger.propagate = True  # Keep default for local dev
+    logger.propagate = False  # Prevent duplication to root logger which may have its own handlers
 
     # Set Level
     level_str = settings.LOG_LEVEL.upper()
