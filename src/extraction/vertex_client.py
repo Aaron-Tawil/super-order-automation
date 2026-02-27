@@ -564,6 +564,10 @@ def extract_invoice_data(
         mime_type = get_mime_type(file_path)
         logger.info(f"Auto-detected MIME type for Phase 2: {mime_type}")
 
+    # Import the new utility
+    from src.shared.utils import convert_pdf_bytes_to_images
+
+    file_parts = []
     try:
         if is_excel_file(mime_type):
             # Excel file - convert to CSV text
@@ -571,22 +575,40 @@ def extract_invoice_data(
                 df = read_excel_safe(file_path)
                 # Convert to CSV string - huge context saving vs raw binary
                 csv_text = df.to_csv(index=False)
-                file_part = types.Part.from_text(text=csv_text)
+                file_parts.append(types.Part.from_text(text=csv_text))
                 logger.info("Excel file converted to CSV for Phase 2.")
             except Exception as e:
                 logger.error(f"Error converting Excel file: {e}")
                 return [], 0.0, {}, {}
-        elif "pdf" in mime_type.lower() or "image" in mime_type.lower():
-            # Standard supported binary types
+        elif "pdf" in mime_type.lower():
+            # PDF file - Convert to images and send ONLY images
+            logger.info("Converting PDF to high-resolution images for Phase 2...")
             with open(file_path, "rb") as f:
                 file_content = f.read()
-            file_part = types.Part.from_bytes(data=file_content, mime_type=mime_type)
+            
+            image_bytes_list = convert_pdf_bytes_to_images(file_content, dpi=200)
+            
+            if image_bytes_list:
+                for img_bytes in image_bytes_list:
+                    file_parts.append(types.Part.from_bytes(data=img_bytes, mime_type="image/png"))
+                logger.info(f"Successfully converted PDF into {len(image_bytes_list)} image parts.")
+            else:
+                # Fallback to sending the raw PDF if conversion fails
+                logger.error("PDF to image conversion returned empty list. Falling back to native PDF.")
+                file_parts.append(types.Part.from_bytes(data=file_content, mime_type="application/pdf"))
+        
+        elif "image" in mime_type.lower():
+            # Standard supported binary types (e.g. valid single images)
+            with open(file_path, "rb") as f:
+                file_content = f.read()
+            file_parts.append(types.Part.from_bytes(data=file_content, mime_type=mime_type))
+            
         else:
             # Fallback or unknown
             logger.warning(f"Warning: Sending unknown mime-type {mime_type} as PDF fallback.")
             with open(file_path, "rb") as f:
                 file_content = f.read()
-            file_part = types.Part.from_bytes(data=file_content, mime_type="application/pdf")
+            file_parts.append(types.Part.from_bytes(data=file_content, mime_type="application/pdf"))
     except FileNotFoundError:
         logger.error(f"Error: File not found at {file_path}")
         return [], 0.0, {}, {}
@@ -603,15 +625,15 @@ def extract_invoice_data(
         current_schema = raw_response_schema
 
     try:
+        # Build the contents list by appending the prompt text to the file parts
+        parts_list = file_parts + [types.Part.from_text(text=prompt_text)]
+        
         response = generate_content_safe(
             model=model_name,
             contents=[
                 types.Content(
                     role="user",
-                    parts=[
-                        file_part,
-                        types.Part.from_text(text=prompt_text),
-                    ],
+                    parts=parts_list,
                 )
             ],
             config=types.GenerateContentConfig(
