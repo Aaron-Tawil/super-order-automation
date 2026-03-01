@@ -1,6 +1,5 @@
 import logging
 from io import BytesIO
-from typing import Optional
 
 import pandas as pd
 import streamlit as st

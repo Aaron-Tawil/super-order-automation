@@ -5,20 +5,11 @@ Streamlit page for viewing, editing, and adding suppliers.
 Features: table view, search, edit form, add new supplier form.
 """
 
-import os
-import sys
-
 import pandas as pd
 import streamlit as st
 
-# Add project root to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-
 from src.data.supplier_service import SupplierService
 from src.shared.translations import get_text
-
-# Page config
-st.set_page_config(page_title="Supplier Management", layout="wide")
 
 
 def show_supplier_table(suppliers: list, search: str = "", key_version: int = 0):
@@ -253,7 +244,7 @@ def main():
 
     with col_search:
         search = st.text_input(
-            get_text("sm_search_placeholder"),  # Used title as placeholder, or empty key
+            get_text("sm_search_placeholder"),
             placeholder=get_text("sm_search_placeholder"),
             label_visibility="collapsed",
         )
@@ -296,4 +287,5 @@ def main():
 
 
 if __name__ == "__main__":
+    st.set_page_config(page_title="Supplier Management", layout="wide")
     main()

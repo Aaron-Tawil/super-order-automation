@@ -9,28 +9,27 @@ Supports:
 
 import os
 import sys
+from pathlib import Path
 
 import pandas as pd
-import requests
 import streamlit as st
 
-# Add project root to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# Ensure repository root is importable when running via:
+# `streamlit run src/dashboard/app.py`
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from dotenv import find_dotenv, load_dotenv
-
-from src.core.processor import OrderProcessor
 from src.dashboard import items_management, supplier_management
 from src.data.items_service import ItemsService
 from src.data.supplier_service import SupplierService
-from src.export.excel_generator import generate_excel_from_order
-from src.extraction.vertex_client import detect_supplier, init_client
+from src.extraction.vertex_client import init_client
 from src.ingestion.gcs_writer import download_file_from_gcs, upload_to_gcs
 from src.shared.config import settings
 from src.shared.logger import get_logger
-from src.shared.models import ExtractedOrder, LineItem
 from src.shared.session_store import get_session, update_session_metadata, update_session_order
 from src.shared.translations import get_text
+from src.shared.utils import get_mime_type
 
 # Configure logger
 logger = get_logger(__name__)
@@ -39,7 +38,6 @@ logger = get_logger(__name__)
 if not settings.GEMINI_API_KEY and not settings.PROJECT_ID:
     logger.warning("WARNING: Neither GEMINI_API_KEY nor GCP_PROJECT_ID found.")
 
-# Page config
 # Page config
 st.set_page_config(page_title=get_text("dashboard_title"), layout="wide", initial_sidebar_state="expanded")
 
@@ -177,14 +175,14 @@ if not st.session_state.get("from_email"):
                              st.info(get_text("new_items_found", count=len(result.new_items_data)))
                              st.success(get_text("new_items_added", count=result.new_items_added))
                              
-                        # 5. Upload to GCS (for Retry functionality)
+                        # Upload to GCS (for retry functionality)
                         try:
                             source_uri = upload_to_gcs(temp_path, uploaded_file.name)
                         except Exception as e:
                             st.warning(get_text("gcs_upload_fail", error=e))
                             source_uri = None
 
-                        # 6. Save to Session
+                        # Save to session
                         session_metadata = {
                             "filename": uploaded_file.name,
                             "source_file_uri": source_uri,
@@ -196,7 +194,7 @@ if not st.session_state.get("from_email"):
 
                         st.session_state["extracted_data"] = order.model_dump()
                         st.session_state["session_metadata"] = session_metadata
-                        st.session_state["from_email"] = False  # It is manual, but we treat it as loaded now
+                        st.session_state["from_email"] = False  # It is manual, but we treat it as loaded now.
 
                         # Cleanup
                         if os.path.exists(temp_path):
@@ -490,11 +488,9 @@ if "extracted_data" in st.session_state:
                     try:
                         # Download
                         temp_path = "temp_retry_file"
-                        # Extract extension from filename for better MIME detection
                         filename = metadata.get("filename", "unknown.pdf")
-                        _, ext = os.path.splitext(filename)
-                        if ext:
-                            temp_path += ext
+                        if "." in filename:
+                            temp_path += os.path.splitext(filename)[1]
 
                         if download_file_from_gcs(source_uri, temp_path):
                             # Init Client (using settings)
@@ -506,7 +502,7 @@ if "extracted_data" in st.session_state:
                             
                             result = pipeline.run_pipeline(
                                 file_path=temp_path,
-                                mime_type="application/pdf" if not ext else f"application/{ext.lstrip('.')}",
+                                mime_type=get_mime_type(filename),
                                 force_supplier_instructions=custom_instructions
                             )
                             

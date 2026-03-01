@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -96,7 +97,8 @@ def test_process_order_event_success(mock_pipeline, mock_download, mock_save_fir
         process_order_event(cloud_event)
 
     # Verify
-    mock_download.assert_called_with("gs://bucket/invoice.pdf", "/tmp/invoice.pdf")
+    expected_temp_path = "/tmp/invoice.pdf" if os.name != "nt" else "temp_invoice.pdf"
+    mock_download.assert_called_with("gs://bucket/invoice.pdf", expected_temp_path)
     pipeline_instance.run_pipeline.assert_called_once()
     mock_save_firestore.assert_called_with(mock_order, "gs://bucket/invoice.pdf")
     mock_reply.assert_called()
