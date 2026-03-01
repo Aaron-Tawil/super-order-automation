@@ -38,6 +38,7 @@ PUBSUB_TOPIC = "gmail-incoming-orders"
 INGESTION_TOPIC = "order-ingestion-topic"
 SECRET_NAME = "super-order-gmail-token"
 TOKEN_FILE = "token.pickle"
+SECRET_VERSIONS_TO_KEEP = 2
 
 
 # Colors for terminal output
@@ -150,9 +151,68 @@ def update_secret_manager():
 
     if process.returncode == 0:
         print_success("Token updated in Secret Manager")
+        cleanup_old_secret_versions(SECRET_VERSIONS_TO_KEEP)
     else:
         print_error("Failed to update secret")
         sys.exit(1)
+
+
+def cleanup_old_secret_versions(keep_count: int = 2):
+    """
+    Keep only the newest `keep_count` secret versions and destroy older ones
+    to reduce Secret Manager active version costs.
+    """
+    if keep_count < 1:
+        keep_count = 1
+
+    print_info(f"Cleaning old secret versions (keeping latest {keep_count})...")
+
+    result = subprocess.run(
+        (
+            f"gcloud secrets versions list {SECRET_NAME} "
+            f"--project={PROJECT_ID} "
+            f"--sort-by=~createTime "
+            f'--format="value(name)"'
+        ),
+        shell=True,
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        print_warning("Could not list secret versions for cleanup. Skipping cleanup.")
+        return
+
+    version_paths = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if len(version_paths) <= keep_count:
+        print_info("No old secret versions to clean.")
+        return
+
+    old_versions = version_paths[keep_count:]
+    destroyed_count = 0
+
+    for version_path in old_versions:
+        version_id = version_path.split("/")[-1]
+        destroy_result = subprocess.run(
+            (
+                f"gcloud secrets versions destroy {version_id} "
+                f"--secret={SECRET_NAME} "
+                f"--project={PROJECT_ID} "
+                f"--quiet"
+            ),
+            shell=True,
+            capture_output=True,
+            text=True,
+        )
+        if destroy_result.returncode == 0:
+            destroyed_count += 1
+        else:
+            print_warning(f"Failed to destroy old secret version: {version_id}")
+
+    if destroyed_count > 0:
+        print_success(f"Destroyed {destroyed_count} old secret version(s)")
+    else:
+        print_info("No old secret versions were destroyed.")
 
 
 def renew_gmail_watch():

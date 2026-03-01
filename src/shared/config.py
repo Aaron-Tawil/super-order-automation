@@ -1,3 +1,4 @@
+import os
 from typing import List, Optional
 
 from pydantic import AliasChoices, Field, SecretStr
@@ -89,6 +90,23 @@ class Settings(BaseSettings):
         
         env_list = [n.strip() for n in self.BLACKLIST_NAMES_STR.split(",") if n.strip()]
         return list(set(base_list + env_list))
+
+    @property
+    def is_cloud_runtime(self) -> bool:
+        """
+        Returns True when running in Cloud Functions/Cloud Run (or explicitly marked as cloud env).
+        """
+        if self.ENVIRONMENT.lower() in ("prod", "production", "cloud"):
+            return True
+
+        cloud_markers = (
+            "K_SERVICE",        # Cloud Run / Cloud Functions gen2
+            "FUNCTION_TARGET",  # Cloud Functions
+            "FUNCTION_NAME",    # Cloud Functions
+            "GAE_ENV",          # App Engine
+            "CLOUD_RUN_JOB",    # Cloud Run Jobs
+        )
+        return any(os.getenv(marker) for marker in cloud_markers)
 
 
 # Singleton instance
