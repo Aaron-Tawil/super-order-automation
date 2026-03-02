@@ -78,7 +78,6 @@ One of the biggest missing pieces is a test suite.
 ### A. Dashboard "Inbox"
 Create a dedicated "Inbox" view in Streamlit.
 - Shows all processed orders with status: `PROCESSING`, `COMPLETED`, `NEEDS_REVIEW`, `FAILED`.
-- Allows users to see *live* progress of an extraction.
 
 ### B. Advanced Search & Filtering
 - Add a sidebar filter to find orders by: **Supplier**, **Date Range**, **Status**, **Items contained**.
@@ -102,7 +101,7 @@ Create a dedicated "Inbox" view in Streamlit.
 ### Phase 2: Reliability (Testing & Async) - [IN PROGRESS]
 1.  Add **Unit Tests** for core logic. (In Progress)
 2.  Implement **Pub/Sub** pattern for email ingestion.
-3.  Add "Dead Letter" handling (if AI fails 3 times, alert human).
+
 
 ### Phase 3: Features (UI)
 1.  Build the **"Inbox"** view.

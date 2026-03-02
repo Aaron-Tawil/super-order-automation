@@ -80,7 +80,7 @@ def is_retryable_error(exception):
     retry=retry_if_exception(is_retryable_error),
     stop=stop_after_attempt(8),
     wait=wait_exponential(multiplier=2, min=4, max=120),
-    before_sleep=before_sleep_log(logging.getLogger(), logging.WARNING),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
 )
 def generate_content_safe(model, contents, config):
     """

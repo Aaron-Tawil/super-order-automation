@@ -1,12 +1,10 @@
 import base64
 import json
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.cloud_functions.processor_fn import process_order_event
-from src.core.events import EmailMetadata, OrderIngestedEvent
 from src.core.pipeline import PipelineResult
 from src.shared.models import ExtractedOrder, LineItem
 
@@ -35,6 +33,18 @@ def mock_init_client():
         yield mock
 
 
+@pytest.fixture
+def mock_processing_status():
+    with patch("src.cloud_functions.processor_fn.upsert_processing_event") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_idempotency_service():
+    with patch("src.cloud_functions.processor_fn.IdempotencyService") as mock:
+        yield mock
+
+
 def create_cloud_event(data: dict):
     """Helper to create a mock CloudEvent."""
     json_data = json.dumps(data)
@@ -46,7 +56,14 @@ def create_cloud_event(data: dict):
     return mock_event
 
 
-def test_process_order_event_success(mock_pipeline, mock_download, mock_save_firestore, mock_init_client):
+def test_process_order_event_success(
+    mock_pipeline,
+    mock_download,
+    mock_save_firestore,
+    mock_init_client,
+    mock_processing_status,
+    mock_idempotency_service,
+):
     # Setup Data
     event_payload = {
         "gcs_uri": "gs://bucket/invoice.pdf",
@@ -66,6 +83,7 @@ def test_process_order_event_success(mock_pipeline, mock_download, mock_save_fir
 
     # Mock behaviors
     mock_download.return_value = True
+    mock_idempotency_service.return_value.check_and_lock_message.return_value = True
 
     with patch("src.cloud_functions.processor_fn.get_gmail_service") as mock_gmail, \
          patch("src.cloud_functions.processor_fn.send_reply") as mock_reply, \
@@ -97,14 +115,22 @@ def test_process_order_event_success(mock_pipeline, mock_download, mock_save_fir
         process_order_event(cloud_event)
 
     # Verify
-    expected_temp_path = "/tmp/invoice.pdf" if os.name != "nt" else "temp_invoice.pdf"
-    mock_download.assert_called_with("gs://bucket/invoice.pdf", expected_temp_path)
+    download_args = mock_download.call_args[0]
+    assert download_args[0] == "gs://bucket/invoice.pdf"
+    assert download_args[1].endswith("_invoice.pdf")
     pipeline_instance.run_pipeline.assert_called_once()
     mock_save_firestore.assert_called_with(mock_order, "gs://bucket/invoice.pdf")
     mock_reply.assert_called()
+    mock_idempotency_service.return_value.mark_message_completed.assert_called()
+    assert mock_processing_status.call_count >= 2
 
 
-def test_process_order_event_download_fail(mock_pipeline, mock_download):
+def test_process_order_event_download_fail(
+    mock_pipeline,
+    mock_download,
+    mock_processing_status,
+    mock_idempotency_service,
+):
     event_payload = {
         "gcs_uri": "gs://bucket/fail.pdf",
         "bucket_name": "bucket",
@@ -115,15 +141,25 @@ def test_process_order_event_download_fail(mock_pipeline, mock_download):
     }
     cloud_event = create_cloud_event(event_payload)
     mock_download.return_value = False  # Fail download
+    mock_idempotency_service.return_value.check_and_lock_message.return_value = True
 
     with patch("src.cloud_functions.processor_fn.get_gmail_service") as _mock_gmail, \
          patch("src.cloud_functions.processor_fn.send_reply") as _mock_reply:
         process_order_event(cloud_event)
 
     mock_pipeline.return_value.run_pipeline.assert_not_called()
+    kwargs = mock_idempotency_service.return_value.mark_message_completed.call_args.kwargs
+    assert kwargs["success"] is False
+    assert mock_processing_status.call_count >= 2
 
 
-def test_process_order_event_no_orders(mock_pipeline, mock_download, mock_save_firestore):
+def test_process_order_event_no_orders(
+    mock_pipeline,
+    mock_download,
+    mock_save_firestore,
+    mock_processing_status,
+    mock_idempotency_service,
+):
     event_payload = {
         "gcs_uri": "gs://bucket/empty.pdf",
         "bucket_name": "bucket",
@@ -134,6 +170,7 @@ def test_process_order_event_no_orders(mock_pipeline, mock_download, mock_save_f
     }
     cloud_event = create_cloud_event(event_payload)
     mock_download.return_value = True
+    mock_idempotency_service.return_value.check_and_lock_message.return_value = True
     
     mock_result = PipelineResult(orders=[], total_cost_usd=0.0)
     mock_pipeline.return_value.run_pipeline.return_value = mock_result
@@ -150,3 +187,6 @@ def test_process_order_event_no_orders(mock_pipeline, mock_download, mock_save_f
         assert "נכשל" in mock_reply.call_args[0][5]
 
     mock_save_firestore.assert_not_called()
+    kwargs = mock_idempotency_service.return_value.mark_message_completed.call_args.kwargs
+    assert kwargs["success"] is False
+    assert mock_processing_status.call_count >= 2

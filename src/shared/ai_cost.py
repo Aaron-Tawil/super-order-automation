@@ -1,10 +1,11 @@
-import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
 import yfinance as yf
 
-logger = logging.getLogger(__name__)
+from src.shared.logger import get_logger
+
+logger = get_logger(__name__)
 
 # Pricing constants per 1 Million tokens (USD)
 # Source: https://cloud.google.com/vertex-ai/pricing

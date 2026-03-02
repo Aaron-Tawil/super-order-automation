@@ -2,28 +2,53 @@ import base64
 import json
 import os
 import re
-from typing import Any, Dict
+import uuid
+from typing import Any
 
 import functions_framework
 from pydantic import ValidationError
 
 from src.core.events import OrderIngestedEvent
-from src.core.processor import OrderProcessor
-from src.data.items_service import ItemsService
-from src.data.supplier_service import SupplierService
 from src.export.excel_generator import generate_excel_from_order
-from src.export.new_items_generator import filter_new_items_from_order, generate_new_items_excel
-from src.extraction.vertex_client import detect_supplier, init_client
-from src.ingestion.firestore_writer import save_order_to_firestore
+from src.export.new_items_generator import generate_new_items_excel
+from src.extraction.vertex_client import init_client
+from src.ingestion.firestore_writer import save_order_to_firestore, upsert_processing_event
 from src.ingestion.gcs_writer import download_file_from_gcs
 from src.ingestion.gmail_utils import get_gmail_service, send_reply
-from src.shared.ai_cost import calculate_cost_ils
 from src.shared.config import settings
+from src.shared.idempotency_service import IdempotencyService
 from src.shared.logger import get_logger
 from src.shared.session_store import create_session
 from src.shared.translations import get_text
 
 logger = get_logger(__name__)
+
+
+def _safe_temp_path(filename: str) -> str:
+    """Build a collision-resistant temp path for downloaded source files."""
+    safe_name = os.path.basename(filename or "document.bin")
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", safe_name).strip("._")
+    if not safe_name:
+        safe_name = "document.bin"
+    unique_name = f"{uuid.uuid4().hex}_{safe_name}"
+    return f"/tmp/{unique_name}" if os.name != "nt" else f"temp_{unique_name}"
+
+
+def _track_event_status(event_id: str, status: str, stage: str, details: dict | None = None) -> None:
+    """Best-effort processing status persistence; never raises."""
+    if not event_id:
+        return
+    upsert_processing_event(event_id, status=status, stage=stage, details=details or {})
+
+
+def _ctx(event_id: str | None = None, message_id: str | None = None) -> str:
+    parts = []
+    if event_id:
+        parts.append(f"event_id={event_id}")
+    if message_id:
+        parts.append(f"message_id={message_id}")
+    return f"[{' '.join(parts)}] " if parts else ""
+
 
 # Initialize Gemini Client once per cold start
 try:
@@ -41,7 +66,13 @@ def process_order_event(cloud_event: Any):
     """
     event = None
     gmail_service = None
-    
+    processing_lock = None
+    temp_path = None
+    attachments = []
+    event_id = str(getattr(cloud_event, "id", "unknown_event"))
+    message_id = ""
+    pubsub_message = ""
+
     try:
         # 1. Decode Pub/Sub Message
         pubsub_message = base64.b64decode(cloud_event.data["message"]["data"]).decode("utf-8")
@@ -53,181 +84,209 @@ def process_order_event(cloud_event: Any):
             event = OrderIngestedEvent(**event_data)
         except (json.JSONDecodeError, ValidationError) as e:
             logger.error(f"Invalid event format: {e}")
+            _track_event_status(
+                event_id,
+                status="FAILED",
+                stage="PARSE_EVENT",
+                details={"error": str(e), "raw_message": pubsub_message[:2000]},
+            )
+            return
+
+        event_id = event.event_id or event_id
+        message_id = event.email_metadata.message_id
+        ctx = _ctx(event_id, message_id)
+        _track_event_status(
+            event_id,
+            status="PROCESSING",
+            stage="RECEIVED",
+            details={"filename": event.filename, "gcs_uri": event.gcs_uri},
+        )
+
+        processing_lock = IdempotencyService(collection_name="processed_order_events")
+        if not processing_lock.check_and_lock_message(event_id, expiry_minutes=180):
+            logger.info(f"{ctx}Skipping duplicate/locked processing event")
+            _track_event_status(
+                event_id,
+                status="SKIPPED",
+                stage="DUPLICATE",
+                details={"reason": "already_processing_or_completed"},
+            )
             return
 
         logger.info("========================================================================")
-        logger.info(f">>> STARTING ORDER PIPELINE: {event.event_id} (File: {event.filename})")
+        logger.info(f"{ctx}>>> STARTING ORDER PIPELINE (File: {event.filename})")
         logger.info("========================================================================")
 
         # 3. Download File
-        temp_path = f"/tmp/{event.filename}" if os.name != "nt" else f"temp_{event.filename}"
+        temp_path = _safe_temp_path(event.filename)
         if not download_file_from_gcs(event.gcs_uri, temp_path):
-            logger.error(f"Failed to download file from {event.gcs_uri}")
+            err_msg = f"Failed to download file from {event.gcs_uri}"
+            logger.error(f"{ctx}{err_msg}")
+            _track_event_status(event_id, status="FAILED", stage="DOWNLOAD", details={"error": err_msg})
+            processing_lock.mark_message_completed(event_id, success=False, error_message=err_msg)
             return
 
-        try:
-            # 4. Execute Full Pipeline
-            from src.core.pipeline import ExtractionPipeline
-            pipeline = ExtractionPipeline()
-            
-            # Email metadata payload for the pipeline
-            email_meta = {
-                "sender": event.email_metadata.sender,
-                "subject": event.email_metadata.subject,
-                "body": event.email_metadata.body_snippet or ""
-            }
-            
-            result = pipeline.run_pipeline(
-                file_path=temp_path,
-                mime_type=event.mime_type,
-                email_metadata=email_meta
+        # 4. Execute Full Pipeline
+        from src.core.pipeline import ExtractionPipeline
+
+        pipeline = ExtractionPipeline()
+        email_meta = {
+            "sender": event.email_metadata.sender,
+            "subject": event.email_metadata.subject,
+            "body": event.email_metadata.body_snippet or "",
+            "event_id": event_id,
+            "message_id": message_id,
+        }
+        result = pipeline.run_pipeline(
+            file_path=temp_path,
+            mime_type=event.mime_type,
+            email_metadata=email_meta,
+        )
+
+        orders = result.orders
+        final_code = result.supplier_code
+        supplier_name = result.supplier_name
+
+        gmail_service = get_gmail_service()
+        if not gmail_service:
+            logger.warning(f"{ctx}Gmail service not available. Feedback emails will not be sent.")
+
+        if not orders:
+            logger.warning(f"{ctx}No orders extracted from {event.filename}")
+            _track_event_status(
+                event_id,
+                status="FAILED",
+                stage="EXTRACTION",
+                details={"error": "No orders extracted", "supplier_code": final_code},
             )
-            
-            orders = result.orders
-            final_code = result.supplier_code
-            supplier_name = result.supplier_name
-
-            gmail_service = get_gmail_service()
-            if not gmail_service:
-                logger.warning("Gmail Service NOT available. Feedback emails will not be sent.")
-
-            if not orders:
-                logger.warning(f"❌ No orders extracted from {event.filename}")
-                if gmail_service:
-                    send_reply(
-                        gmail_service,
-                        event.email_metadata.thread_id,
-                        event.email_metadata.message_id,
-                        event.email_metadata.sender,
-                        event.email_metadata.subject,
-                        get_text("email_fail_body")
-                    )
-                return
-
-            logger.info(f"✅ Successfully extracted {len(orders)} order(s).")
-
-            # 6. Finalize and Save to Firestore
-            attachments = [temp_path]  # Start with original document
-            
-            # Build Message Body (HTML with RTL support)
-            msg_body = f"""
-            <div dir="rtl" style="font-family: Arial, sans-serif; text-align: right; line-height: 1.5;">
-                <p>{get_text("email_greeting")}</p>
-                <p>{get_text("email_processed_intro", subject=event.email_metadata.subject)}</p>
-            """
-
-            for i, order in enumerate(orders):
-                logger.info(f"--- Processing Order {i+1}/{len(orders)}: Invoice {order.invoice_number or 'Unknown'} ---")
-
-                # The pipeline already auto-added new items. We just need to generate the new items excel sheet if needed.
-                new_items_count = len(result.new_items_data) if i == 0 else 0 # Only attach new items sheet for the first order to avoid dupes
-
-                if new_items_count > 0:
-                    logger.info(f"🆕 Found {new_items_count} NEW items in this batch. Generating attachment.")
-                    safe_invoice_num = re.sub(r'[^a-zA-Z0-9_-]', '_', str(order.invoice_number))
-                    safe_supplier_code = re.sub(r'[^a-zA-Z0-9_-]', '_', str(final_code))
-                    
-                    # Convert dicts back to items for generator
-                    from src.shared.models import LineItem
-                    fake_new_items = [LineItem(**item) for item in result.new_items_data]
-                    
-                    new_items_filename = f"new_items_{safe_invoice_num}_{safe_supplier_code}.xlsx"
-                    new_items_path = f"/tmp/{new_items_filename}"
-                    generate_new_items_excel(fake_new_items, final_code, new_items_path)
-                    attachments.append(new_items_path)
-
-                # 8. Save to Firestore & Create Session
-                doc_id = save_order_to_firestore(order, event.gcs_uri)
-                session_id = create_session(order, metadata={
-                    "subject": event.email_metadata.subject,
-                    "sender": event.email_metadata.sender,
-                    "filename": event.filename,
-                    "phase1_reasoning": result.phase1_reasoning
-                })
-                logger.info(f"✅ Order saved to Firestore (ID: {doc_id}). Session created: {session_id}")
-                
-                # 9. Generate Order Excel Attachment
-                safe_invoice_num = re.sub(r'[^a-zA-Z0-9_-]', '_', str(order.invoice_number))
-                safe_supplier_code = re.sub(r'[^a-zA-Z0-9_-]', '_', str(final_code))
-                
-                order_excel_filename = f"order_{safe_invoice_num}_{safe_supplier_code}.xlsx"
-                order_excel_path = f"/tmp/{order_excel_filename}"
-                try:
-                    generate_excel_from_order(order, order_excel_path)
-                    attachments.append(order_excel_path)
-                except Exception as excel_err:
-                    logger.error(f"Failed to generate Order Excel: {excel_err}")
-
-                # 10. Add Order Section to Message Body (HTML)
-                msg_body += f"<hr><h3>{get_text('metric_invoice')}: {order.invoice_number or 'Unknown'}</h3>"
-                msg_body += "<ul>"
-                msg_body += f"<li>{get_text('email_att_extracted', count=len(order.line_items)).strip()}</li>"
-                msg_body += f"<li>{get_text('email_att_supplier', name=supplier_name, code=final_code).strip()}</li>"
-                msg_body += f"<li>{get_text('email_est_cost', cost=order.processing_cost_ils).strip()}</li>"
-                
-                if new_items_count > 0:
-                    msg_body += f"<li>{get_text('email_att_new_items', count=new_items_count).strip()}</li>"
-                
-                # Specific Warnings
-                if final_code == "UNKNOWN":
-                    msg_body += f"<li><span style='color: orange;'>{get_text('email_warn_unknown').strip()}</span></li>"
-                
-                if order.warnings:
-                    for warn in order.warnings:
-                        msg_body += f"<li><span style='color: orange;'>{warn.strip()}</span></li>"
-                
-                msg_body += "</ul>"
-
-                # AI Notes & Reasoning
-                if order.notes or order.math_reasoning or order.qty_reasoning:
-                    msg_body += "<div style='background-color: #f9f9f9; padding: 10px; border-radius: 5px; margin: 10px 0;'>"
-                    
-                    if order.notes:
-                        msg_body += f"<strong>{get_text('ai_notes_title')}</strong><br>{order.notes}<br>"
-                    
-                    if order.math_reasoning:
-                        msg_body += f"<p><strong>{get_text('ai_reasoning_title')} (מתמטי):</strong><br>{order.math_reasoning}</p>"
-                    
-                    if order.qty_reasoning:
-                        msg_body += f"<p><strong>{get_text('ai_reasoning_title')} (כמותי):</strong><br>{order.qty_reasoning}</p>"
-                    msg_body += "</div>"
-                
-                # Edit Link with Session
-                edit_url = f"{settings.WEB_UI_URL}/?session={session_id}"
-                msg_body += f"<p>✏️ {get_text('email_edit_link').strip()}<br>"
-                msg_body += f"<a href='{edit_url}'>{edit_url}</a></p>"
-
-            # Finalize Message
-            msg_body += f"<br><p>{get_text('email_signoff')}</p>"
-            msg_body += "</div>"
-            
-            # Send Email
+            processing_lock.mark_message_completed(event_id, success=False, error_message="No orders extracted")
             if gmail_service:
-                logger.info(f">>> SENDING FEEDBACK EMAIL to {event.email_metadata.sender}...")
                 send_reply(
                     gmail_service,
                     event.email_metadata.thread_id,
                     event.email_metadata.message_id,
                     event.email_metadata.sender,
                     event.email_metadata.subject,
-                    msg_body,
-                    attachment_paths=attachments,
-                    is_html=True
+                    get_text("email_fail_body"),
                 )
-                logger.info("✅ Pipeline complete. Email sent.")
-            
-            # Cleanup generated temp files (excluding the original document which is cleaned in finally)
-            for path in attachments[1:]:  # skip original temp_path
-                if path and os.path.exists(path):
-                    os.remove(path)
+            return
 
-        finally:
-            # Cleanup original document
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+        logger.info(f"{ctx}✅ Successfully extracted {len(orders)} order(s).")
+        attachments = [temp_path]
+
+        # Build Message Body (HTML with RTL support)
+        msg_body = f"""
+            <div dir="rtl" style="font-family: Arial, sans-serif; text-align: right; line-height: 1.5;">
+                <p>{get_text("email_greeting")}</p>
+                <p>{get_text("email_processed_intro", subject=event.email_metadata.subject)}</p>
+            """
+
+        for i, order in enumerate(orders):
+            logger.info(f"{ctx}--- Processing Order {i + 1}/{len(orders)}: Invoice {order.invoice_number or 'Unknown'} ---")
+
+            new_items_count = len(result.new_items_data) if i == 0 else 0
+
+            if new_items_count > 0:
+                logger.info(f"{ctx}🆕 Found {new_items_count} NEW items in this batch. Generating attachment.")
+                safe_invoice_num = re.sub(r"[^a-zA-Z0-9_-]", "_", str(order.invoice_number))
+                safe_supplier_code = re.sub(r"[^a-zA-Z0-9_-]", "_", str(final_code))
+
+                from src.shared.models import LineItem
+
+                fake_new_items = [LineItem(**item) for item in result.new_items_data]
+                new_items_filename = f"new_items_{safe_invoice_num}_{safe_supplier_code}.xlsx"
+                new_items_path = f"/tmp/{new_items_filename}"
+                generate_new_items_excel(fake_new_items, final_code, new_items_path)
+                attachments.append(new_items_path)
+
+            doc_id = save_order_to_firestore(order, event.gcs_uri)
+            session_id = create_session(
+                order,
+                metadata={
+                    "subject": event.email_metadata.subject,
+                    "sender": event.email_metadata.sender,
+                    "filename": event.filename,
+                    "phase1_reasoning": result.phase1_reasoning,
+                },
+            )
+            logger.info(f"{ctx}✅ Order saved to Firestore (ID: {doc_id}). Session created: {session_id}")
+
+            safe_invoice_num = re.sub(r"[^a-zA-Z0-9_-]", "_", str(order.invoice_number))
+            safe_supplier_code = re.sub(r"[^a-zA-Z0-9_-]", "_", str(final_code))
+            order_excel_filename = f"order_{safe_invoice_num}_{safe_supplier_code}.xlsx"
+            order_excel_path = f"/tmp/{order_excel_filename}"
+            try:
+                generate_excel_from_order(order, order_excel_path)
+                attachments.append(order_excel_path)
+            except Exception as excel_err:
+                logger.error(f"{ctx}Failed to generate Order Excel: {excel_err}")
+
+            msg_body += f"<hr><h3>{get_text('metric_invoice')}: {order.invoice_number or 'Unknown'}</h3>"
+            msg_body += "<ul>"
+            msg_body += f"<li>{get_text('email_att_extracted', count=len(order.line_items)).strip()}</li>"
+            msg_body += f"<li>{get_text('email_att_supplier', name=supplier_name, code=final_code).strip()}</li>"
+            msg_body += f"<li>{get_text('email_est_cost', cost=order.processing_cost_ils).strip()}</li>"
+
+            if new_items_count > 0:
+                msg_body += f"<li>{get_text('email_att_new_items', count=new_items_count).strip()}</li>"
+
+            if final_code == "UNKNOWN":
+                msg_body += f"<li><span style='color: orange;'>{get_text('email_warn_unknown').strip()}</span></li>"
+
+            if order.warnings:
+                for warn in order.warnings:
+                    msg_body += f"<li><span style='color: orange;'>{warn.strip()}</span></li>"
+
+            msg_body += "</ul>"
+
+            if order.notes or order.math_reasoning or order.qty_reasoning:
+                msg_body += "<div style='background-color: #f9f9f9; padding: 10px; border-radius: 5px; margin: 10px 0;'>"
+                if order.notes:
+                    msg_body += f"<strong>{get_text('ai_notes_title')}</strong><br>{order.notes}<br>"
+                if order.math_reasoning:
+                    msg_body += (
+                        f"<p><strong>{get_text('ai_reasoning_title')} (מתמטי):</strong><br>{order.math_reasoning}</p>"
+                    )
+                if order.qty_reasoning:
+                    msg_body += (
+                        f"<p><strong>{get_text('ai_reasoning_title')} (כמותי):</strong><br>{order.qty_reasoning}</p>"
+                    )
+                msg_body += "</div>"
+
+            edit_url = f"{settings.WEB_UI_URL}/?session={session_id}"
+            msg_body += f"<p>✏️ {get_text('email_edit_link').strip()}<br>"
+            msg_body += f"<a href='{edit_url}'>{edit_url}</a></p>"
+
+        msg_body += f"<br><p>{get_text('email_signoff')}</p>"
+        msg_body += "</div>"
+
+        if gmail_service:
+            logger.info(f"{ctx}>>> SENDING FEEDBACK EMAIL to {event.email_metadata.sender}...")
+            send_reply(
+                gmail_service,
+                event.email_metadata.thread_id,
+                event.email_metadata.message_id,
+                event.email_metadata.sender,
+                event.email_metadata.subject,
+                msg_body,
+                attachment_paths=attachments,
+                is_html=True,
+            )
+            logger.info(f"{ctx}✅ Pipeline complete. Email sent.")
+
+        _track_event_status(
+            event_id,
+            status="COMPLETED",
+            stage="FINISHED",
+            details={"orders_count": len(orders), "supplier_code": final_code, "filename": event.filename},
+        )
+        processing_lock.mark_message_completed(event_id, success=True)
 
     except Exception as e:
-        logger.error(f"Fatal error in process_order_event: {e}", exc_info=True)
+        logger.error(f"{_ctx(event_id, message_id)}Fatal error in process_order_event: {e}", exc_info=True)
+        _track_event_status(event_id, status="FAILED", stage="FATAL", details={"error": str(e)})
+        if processing_lock:
+            processing_lock.mark_message_completed(event_id, success=False, error_message=str(e))
         if event:
             if not gmail_service:
                 gmail_service = get_gmail_service()
@@ -238,6 +297,12 @@ def process_order_event(cloud_event: Any):
                     event.email_metadata.message_id,
                     event.email_metadata.sender,
                     event.email_metadata.subject,
-                    get_text("email_err_body_prefix") + str(e)
+                    get_text("email_err_body_prefix") + str(e),
                 )
-        raise e
+        raise
+    finally:
+        for path in attachments[1:]:
+            if path and os.path.exists(path):
+                os.remove(path)
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)

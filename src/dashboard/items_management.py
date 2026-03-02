@@ -1,15 +1,13 @@
-import logging
 from io import BytesIO
 
 import pandas as pd
 import streamlit as st
 
 from src.data.items_service import ItemsService
+from src.shared.logger import get_logger
 from src.shared.translations import get_text
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _clean_numeric_str(val) -> str | None:

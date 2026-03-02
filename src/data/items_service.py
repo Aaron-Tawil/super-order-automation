@@ -4,13 +4,14 @@ Items Service for barcode lookup and new item detection.
 Uses Firestore as the backing store with in-memory caching for performance.
 """
 
-import logging
 from typing import List, Optional, Set
 
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 
-logger = logging.getLogger(__name__)
+from src.shared.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class ItemsService:

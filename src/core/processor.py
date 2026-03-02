@@ -28,6 +28,7 @@ class OrderProcessor:
         mime_type: str = None,
         email_context: str = None,
         supplier_instructions: str = None,
+        trace_context: str = "",
     ) -> tuple[list[ExtractedOrder], float, dict, dict]:
         """
         Main entry point for processing a file.
@@ -47,8 +48,10 @@ class OrderProcessor:
 
         while attempt <= MAX_RETRIES:
             trial_version = 1 if attempt == 0 else 2
-            logger.warning(f"--- 📄 PIPELINE ATTEMPT {attempt + 1}/{MAX_RETRIES + 1} (TRIAL {trial_version}) ---")
-            logger.warning(f"File: {os.path.basename(file_path)} | MIME: {mime_type}")
+            logger.info(
+                f"{trace_context}--- 📄 PIPELINE ATTEMPT {attempt + 1}/{MAX_RETRIES + 1} (TRIAL {trial_version}) ---"
+            )
+            logger.info(f"{trace_context}File: {os.path.basename(file_path)} | MIME: {mime_type}")
 
             # Step 1: Raw Extraction (LLM)
             try:
@@ -58,6 +61,7 @@ class OrderProcessor:
                     email_context=email_context,
                     supplier_instructions=supplier_instructions,
                     retry_count=attempt,
+                    trace_context=trace_context,
                 )
                 total_cost += attempt_cost
                 all_raw_responses[trial_version] = raw_response
@@ -70,7 +74,7 @@ class OrderProcessor:
                 return [], total_cost, all_raw_responses, {}
 
             if not orders:
-                logger.warning(f"⚠️ No orders returned from extraction (Attempt {attempt + 1}).")
+                logger.info(f"{trace_context}No orders returned from extraction (attempt {attempt + 1}).")
                 if attempt < MAX_RETRIES:
                     attempt += 1
                     continue
@@ -110,7 +114,7 @@ class OrderProcessor:
                             f"Quantity Validation Error: Line item '{item.description}' has a non-integer quantity ({qty}). "
                             "This suggests the AI swapped the 'Price' and 'Quantity' columns."
                         )
-                        logger.warning(f"⚠️ {msg}")
+                        logger.warning(f"{trace_context}{msg}")
                         order.warnings.append(msg)
                         if trial_version == 1:
                             critical_failure_found = True
@@ -125,11 +129,11 @@ class OrderProcessor:
                         f"Validation Failed: Document Total ({order.document_total_with_vat}) "
                         f"!= Calculated Total ({calc_total:.2f}). Diff: {diff_total:.2f}{reason_msg}"
                     )
-                    logger.warning(f"❌ {msg}")
+                    logger.warning(f"{trace_context}{msg}")
                     order.warnings.append(msg)
                     critical_failure_found = True
                 else:
-                    logger.warning(f"✅ Validation Passed for Order {i+1}! Diff: {diff_total:.2f}")
+                    logger.info(f"{trace_context}✅ Validation passed for order {i+1}. Diff: {diff_total:.2f}")
 
                 # 3c. Bulk Quantity Validation (if document total exists)
                 is_valid_qty, calc_qty, diff_qty = self._validate_quantity(order, trial_version)
@@ -139,24 +143,24 @@ class OrderProcessor:
                         f"Quantity Validation Failed: Document Qty ({order.document_total_quantity}) "
                         f"!= Calculated ({calc_qty}). Diff: {diff_qty}{reason_msg}"
                     )
-                    logger.warning(f"⚠️ {msg}")
+                    logger.warning(f"{trace_context}{msg}")
                     order.warnings.append(msg)
                 else:
-                    logger.info(f"✅ Quantity Validation Passed! Diff: {diff_qty}")
+                    logger.info(f"{trace_context}✅ Quantity validation passed. Diff: {diff_qty}")
 
                 validated_data.append(order)
 
             # Step 4: Retry Decision
             if critical_failure_found and attempt < MAX_RETRIES:
                 logger.warning(
-                    f"🔄 CRITICAL VALIDATION FAILED. Switching to Trial 2 logic... (Next: Attempt {attempt + 1})"
+                    f"{trace_context}CRITICAL validation failed. Switching to trial 2 logic (next attempt: {attempt + 1})."
                 )
                 attempt += 1
                 continue
 
             # If we get here, either success or max retries reached
             final_orders = validated_data
-            logger.warning(f"✨ Extraction Phase Finished. Total Orders: {len(final_orders)}")
+            logger.info(f"{trace_context}Extraction phase finished. Total orders: {len(final_orders)}")
             break
 
         if final_metadata:

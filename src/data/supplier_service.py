@@ -12,13 +12,14 @@ Matching priority:
 """
 
 import io
-import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from google.cloud import firestore
 
-logger = logging.getLogger(__name__)
+from src.shared.logger import get_logger
+
+logger = get_logger(__name__)
 
 # Constant for unknown supplier
 UNKNOWN_SUPPLIER = "UNKNOWN"
@@ -236,7 +237,9 @@ class SupplierService:
                 return code
 
         # No match found
-        logger.warning(
+        # Intermediate probe misses are common during multi-step detection flows.
+        # Keep this at DEBUG; final unresolved detection is logged at WARNING by callers.
+        logger.debug(
             f"Could not match supplier - global_id: {global_id}, phone: {phone}, email: {email}, name: {name}"
         )
         return UNKNOWN_SUPPLIER

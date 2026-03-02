@@ -72,6 +72,7 @@ def detect_supplier(
     invoice_file_path: str = None,
     invoice_mime_type: str = None,
     suppliers_csv: str = None,
+    trace_context: str = "",
 ) -> SupplierDetectionResult:
     """
     Phase 1 LLM call: detect supplier from email context, supplier list, and optional invoice.
@@ -131,8 +132,11 @@ def detect_supplier(
     content_parts.append(types.Part.from_text(text=prompt))
 
     model_name = "gemini-2.5-flash"
-    logger.warning(f">>> Phase 1: Starting Supplier Detection using {model_name}...")
-    logger.debug(f"Phase 1 Context: Email Snippet={filtered_email[:100]}..., Invoice Context={invoice_context[:100]}...")
+    logger.info(f"{trace_context}>>> Phase 1: Starting Supplier Detection using {model_name}...")
+    logger.debug(
+        f"{trace_context}Phase 1 Context: Email Snippet={filtered_email[:100]}..., "
+        f"Invoice Context={invoice_context[:100]}..."
+    )
 
     try:
         response = generate_content_safe(
@@ -163,11 +167,15 @@ def detect_supplier(
             logger.warning(f"Failed to calculate cost/metadata for Phase 1: {e}")
             cost = 0.0
 
-        logger.warning(
-            f"Phase 1 Finished: Model={model_name}, Supplier={supplier_code}, "
+        summary = (
+            f"{trace_context}Phase 1 Finished: Model={model_name}, Supplier={supplier_code}, "
             f"Email={detected_email}, ID={detected_id}, Confidence={confidence:.2f}, Cost=${cost:.6f}"
         )
-        logger.info(f"Phase 1 Reasoning: {reasoning}")
+        if supplier_code == "UNKNOWN":
+            logger.warning(summary)
+        else:
+            logger.info(summary)
+        logger.info(f"{trace_context}Phase 1 Reasoning: {reasoning}")
 
         logger.info(
             "AI Model Response (Phase 1 - Structured)",

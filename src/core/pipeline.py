@@ -14,6 +14,16 @@ from src.shared.models import ExtractedOrder
 
 logger = get_logger(__name__)
 
+
+def _trace_context_from_metadata(email_metadata: dict | None = None) -> str:
+    """Build a compact trace context string for log messages."""
+    if not email_metadata:
+        return ""
+    keys = ("run_id", "event_id", "message_id")
+    parts = [f"{k}={email_metadata.get(k)}" for k in keys if email_metadata.get(k)]
+    return f"[{' '.join(parts)}] " if parts else ""
+
+
 class PipelineResult(BaseModel):
     """Standardized output from the ExtractionPipeline."""
     orders: list[ExtractedOrder] = Field(default_factory=list)
@@ -56,9 +66,10 @@ class ExtractionPipeline:
         Executes the full extraction pipeline flow.
         """
         result = PipelineResult()
+        trace_ctx = _trace_context_from_metadata(email_metadata)
         
         # --- PHASE 0: Local Supplier Detection ---
-        logger.info(">>> PHASE 0: Local Supplier Detection...")
+        logger.info(f"{trace_ctx}>>> PHASE 0: Local Supplier Detection...")
         detected_code, confidence, detection_method = self.local_detector.detect_supplier(
             file_path=file_path,
             mime_type=mime_type,
@@ -71,22 +82,25 @@ class ExtractionPipeline:
         email_context = email_metadata.get("body", "") if email_metadata else ""
         
         if detected_code != "UNKNOWN":
-             logger.info(f"✅ Supplier Locally Detected via {detection_method}: {detected_code} (Conf: {confidence})")
+             logger.info(
+                 f"{trace_ctx}✅ Supplier Locally Detected via {detection_method}: {detected_code} (Conf: {confidence})"
+             )
              result.supplier_code = detected_code
              result.confidence = confidence
              result.detection_method = detection_method
              result.phase1_reasoning = f"זוהה מקומית לפי {detection_method} (ביטחון: {confidence:.2f})"
         else:
             # --- PHASE 1: AI Supplier Detection ---
-            logger.info("⚠️ Local detection failed. Proceeding to Vertex AI...")
-            logger.info(">>> PHASE 1: Supplier Detection (Vertex AI)...")
+            logger.warning(f"{trace_ctx}Local detection failed. Proceeding to Vertex AI...")
+            logger.info(f"{trace_ctx}>>> PHASE 1: Supplier Detection (Vertex AI)...")
             
             detected_code, confidence, phase1_cost, reasoning, raw_data_p1, detected_email, detected_id = detect_supplier(
                 email_body=email_context,
                 invoice_file_path=file_path,
-                invoice_mime_type=mime_type
+                invoice_mime_type=mime_type,
+                trace_context=trace_ctx,
             )
-            logger.info(f"Phase 1 Cost: ${phase1_cost:.6f}")
+            logger.info(f"{trace_ctx}Phase 1 Cost: ${phase1_cost:.6f}")
             
             result.supplier_code = detected_code
             result.confidence = confidence
@@ -101,27 +115,27 @@ class ExtractionPipeline:
             if detected_email:
                 detected_email = detected_email.strip().lower()
                 if "@" in detected_email and not self.local_detector._is_blacklisted_email(detected_email):
-                   logger.info(f"🧠 Auto-Learning: Attempting to link {detected_email} to {result.supplier_code}")
+                   logger.info(f"{trace_ctx}🧠 Auto-Learning: Attempting to link {detected_email} to {result.supplier_code}")
                    try:
                        success, was_added = self.supplier_service.add_email_to_supplier(result.supplier_code, detected_email)
                        if success and was_added:
-                           logger.info(f"🎉 Auto-Learned: {detected_email} is now linked to {result.supplier_code}")
+                           logger.info(f"{trace_ctx}🎉 Auto-Learned: {detected_email} is now linked to {result.supplier_code}")
                        elif success and not was_added:
-                           logger.info(f"Email {detected_email} already linked to {result.supplier_code}")
+                           logger.info(f"{trace_ctx}Email {detected_email} already linked to {result.supplier_code}")
                    except Exception as e:
-                       logger.error(f"Auto-learning email failed: {e}")
+                       logger.error(f"{trace_ctx}Auto-learning email failed: {e}")
 
             # 2. Global ID (Business ID)
             if detected_id:
-                logger.info(f"🧠 Auto-Learning: Attempting to link ID {detected_id} to {result.supplier_code}")
+                logger.info(f"{trace_ctx}🧠 Auto-Learning: Attempting to link ID {detected_id} to {result.supplier_code}")
                 try:
                      success, was_added = self.supplier_service.update_missing_global_id(result.supplier_code, detected_id)
                      if success and was_added:
-                         logger.info(f"🎉 Auto-Learned: ID {detected_id} is now linked to {result.supplier_code}")
+                         logger.info(f"{trace_ctx}🎉 Auto-Learned: ID {detected_id} is now linked to {result.supplier_code}")
                      elif success and not was_added:
-                         logger.info(f"ID {detected_id} already linked to {result.supplier_code}")
+                         logger.info(f"{trace_ctx}ID {detected_id} already linked to {result.supplier_code}")
                 except Exception as e:
-                    logger.error(f"Auto-learning ID failed: {e}")
+                    logger.error(f"{trace_ctx}Auto-learning ID failed: {e}")
         # -----------------------------------------------------
 
         supplier_instructions = None
@@ -132,30 +146,31 @@ class ExtractionPipeline:
             if s_data:
                 result.supplier_name = s_data.get("name", "Unknown")
                 supplier_instructions = s_data.get("special_instructions")
-                logger.info(f"✅ Supplier Identified: {result.supplier_name} ({result.supplier_code})")
+                logger.info(f"{trace_ctx}✅ Supplier Identified: {result.supplier_name} ({result.supplier_code})")
         else:
-            logger.warning("⚠️ Supplier detection returned UNKNOWN.")
+            logger.warning(f"{trace_ctx}Supplier detection returned UNKNOWN.")
 
         # --- PHASE 2: Extraction & Post-Processing ---
-        logger.info(">>> PHASE 2: Extraction & Post-Processing...")
+        logger.info(f"{trace_ctx}>>> PHASE 2: Extraction & Post-Processing...")
         orders, phase2_cost, all_raw_responses, _ = self.processor.process_file(
             file_path, 
             mime_type=mime_type, 
             email_context=email_context,
-            supplier_instructions=supplier_instructions
+            supplier_instructions=supplier_instructions,
+            trace_context=trace_ctx,
         )
         
         result.raw_phase2_responses = all_raw_responses
         result.total_cost_usd = phase1_cost + phase2_cost
         result.total_cost_ils = calculate_cost_ils(result.total_cost_usd)
         
-        logger.info(f"Phase 2 Cost: ${phase2_cost:.6f} | Total Pipeline Cost: ${result.total_cost_usd:.6f}")
+        logger.info(f"{trace_ctx}Phase 2 Cost: ${phase2_cost:.6f} | Total Pipeline Cost: ${result.total_cost_usd:.6f}")
 
         if not orders:
-            logger.warning("❌ No orders extracted.")
+            logger.warning(f"{trace_ctx}No orders extracted.")
             return result
 
-        logger.info(f"✅ Successfully extracted {len(orders)} order(s).")
+        logger.info(f"{trace_ctx}✅ Successfully extracted {len(orders)} order(s).")
         result.orders = orders
 
         # Final pass over extracted orders: Fallback Matching, Cost Splitting, and new item detection
@@ -175,7 +190,7 @@ class ExtractionPipeline:
                     s_data = self.supplier_service.get_supplier(result.supplier_code)
                     result.supplier_name = s_data.get("name", "Unknown") if s_data else "Unknown"
                     result.detection_method = "extraction_fallback"
-                    logger.info(f"✅ Supplier Fallback Match: {result.supplier_name} ({result.supplier_code})")
+                    logger.info(f"{trace_ctx}✅ Supplier Fallback Match: {result.supplier_name} ({result.supplier_code})")
 
             # Update Order Object Supplier
             order.supplier_code = result.supplier_code
@@ -219,9 +234,9 @@ class ExtractionPipeline:
                              added_count = self.items_service.add_new_items_batch(items_to_add)
                              result.new_items_added += added_count
                              added_barcodes.extend([i["barcode"] for i in items_to_add])
-                             logger.info(f"✅ Auto-added {added_count} new items to DB.")
+                             logger.info(f"{trace_ctx}✅ Auto-added {added_count} new items to DB.")
                          except Exception as e:
-                             logger.error(f"Failed to save new items: {e}")
+                             logger.error(f"{trace_ctx}Failed to save new items: {e}")
 
         result.added_barcodes = added_barcodes
         result.new_items_data = new_items_display_data

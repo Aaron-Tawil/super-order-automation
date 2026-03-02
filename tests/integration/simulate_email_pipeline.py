@@ -14,7 +14,6 @@ Usage:
 import argparse
 import base64
 import json
-import logging
 import os
 import sys
 from datetime import datetime
@@ -29,8 +28,6 @@ from src.ingestion.gcs_writer import upload_to_gcs
 from src.shared.config import settings
 from src.shared.logger import get_logger
 
-# Configure logger to print to console
-logging.basicConfig(level=logging.INFO)
 logger = get_logger(__name__)
 
 

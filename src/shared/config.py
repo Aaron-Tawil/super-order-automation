@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # --- Firestore ---
     FIRESTORE_ORDERS_COLLECTION: str = "orders"
     FIRESTORE_SESSIONS_COLLECTION: str = "sessions"
+    FIRESTORE_PROCESSING_COLLECTION: str = "processing_events"
     SESSION_EXPIRY_HOURS: int = 24
 
     # --- AI / Gemini ---

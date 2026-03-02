@@ -1,5 +1,4 @@
-from datetime import datetime
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
@@ -11,7 +10,7 @@ class EmailMetadata(BaseModel):
     thread_id: str
     sender: str
     subject: str
-    received_at: datetime = Field(default_factory=datetime.utcnow)
+    received_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     body_snippet: str | None = None
 
 
@@ -29,5 +28,5 @@ class OrderIngestedEvent(BaseModel):
     email_metadata: EmailMetadata
 
     # Traceability
-    event_id: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    event_id: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))

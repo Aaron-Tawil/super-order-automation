@@ -24,6 +24,7 @@ def extract_invoice_data(
     email_context: str = None,
     supplier_instructions: str = None,
     retry_count: int = 0,
+    trace_context: str = "",
 ) -> InvoiceExtractionResult:
     """
     Phase 2 LLM call: extract invoice line items and totals from document inputs.
@@ -40,8 +41,8 @@ def extract_invoice_data(
 
     model_name = "gemini-2.5-pro" if trial_version == 2 else "gemini-2.5-flash"
 
-    logger.warning(f">>> Phase 2: Starting Extraction (Attempt {retry_count}) using {model_name}...")
-    logger.info(f"File: {os.path.basename(file_path)} | Trial Version: {trial_version}")
+    logger.info(f"{trace_context}>>> Phase 2: Starting Extraction (Attempt {retry_count}) using {model_name}...")
+    logger.info(f"{trace_context}File: {os.path.basename(file_path)} | Trial Version: {trial_version}")
 
     if mime_type is None:
         mime_type = get_mime_type(file_path)
@@ -126,7 +127,7 @@ def extract_invoice_data(
 
         raw_json = raw_json.replace("```json", "").replace("```", "").strip()
 
-        logger.info(f"✅ Phase 2 Finished (Model={model_name}). JSON received.")
+        logger.info(f"{trace_context}✅ Phase 2 Finished (Model={model_name}). JSON received.")
 
         parsed_json = {}
         try:
@@ -153,9 +154,9 @@ def extract_invoice_data(
             usage_metadata = response_metadata.get("usage", {})
             cost = calculate_cost(model_name, usage_metadata)
         except Exception as cost_err:
-            logger.warning(f"Failed to calculate cost for Phase 2: {cost_err}")
+            logger.warning(f"{trace_context}Failed to calculate cost for Phase 2: {cost_err}")
 
-        logger.warning(f"Phase 2 Cost: ${cost:.6f}")
+        logger.info(f"{trace_context}Phase 2 Cost: ${cost:.6f}")
 
         try:
             multi_order = MultiOrderResponse.model_validate_json(raw_json)

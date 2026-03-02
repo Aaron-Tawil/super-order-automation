@@ -1,12 +1,8 @@
 import base64
-import json
 import os
-import uuid
-from datetime import datetime
-from typing import List, Optional
+import tempfile
 
 from google.cloud import pubsub_v1
-from googleapiclient.discovery import build
 
 from src.core.events import EmailMetadata, OrderIngestedEvent
 from src.ingestion.gcs_writer import upload_to_gcs
@@ -79,128 +75,135 @@ class IngestionService:
 
             for msg_item in messages:
                 msg_id = msg_item["id"]
-
-                # === IDEMPOTENCY CHECK ===
-                if not idempotency.check_and_lock_message(msg_id):
-                    logger.info(f"Skipping message {msg_id}: Already processed or locked.")
-                    continue
+                msg_ctx = f"[message_id={msg_id}] "
+                lock_acquired = False
 
                 try:
                     # Fetch full details
                     msg = service.users().messages().get(userId="me", id=msg_id).execute()
-                except Exception as msg_err:
-                    logger.error(f"Failed to fetch details for {msg_id}: {msg_err}")
-                    continue
 
-                if "UNREAD" not in msg["labelIds"]:
-                    continue
+                    if "UNREAD" not in msg["labelIds"]:
+                        continue
 
-                headers = msg["payload"]["headers"]
-                subject = next((h["value"] for h in headers if h["name"] == "Subject"), "No Subject")
-                thread_id = msg["threadId"]
+                    headers = msg["payload"]["headers"]
+                    subject = next((h["value"] for h in headers if h["name"] == "Subject"), "No Subject")
+                    thread_id = msg["threadId"]
 
-                # Safety Filter: Replies
-                if subject.lower().startswith("re:"):
-                    logger.info(f"Skipping Reply: {subject}")
-                    continue
+                    # Safety Filter: Replies
+                    if subject.lower().startswith("re:"):
+                        logger.info(f"{msg_ctx}Skipping reply: {subject}")
+                        continue
 
-                # Extract Sender
-                sender = next((h["value"] for h in headers if h["name"] == "From"), "Unknown")
+                    # Extract Sender
+                    sender = next((h["value"] for h in headers if h["name"] == "From"), "Unknown")
 
-                # Ignore self
-                profile = service.users().getProfile(userId="me").execute()
-                my_email = profile["emailAddress"]
-                if my_email.lower() in sender.lower():
-                    continue
+                    # Ignore self
+                    profile = service.users().getProfile(userId="me").execute()
+                    my_email = profile["emailAddress"]
+                    if my_email.lower() in sender.lower():
+                        continue
 
-                logger.info(f"Ingesting Email: {subject} from {sender}")
+                    logger.info(f"{msg_ctx}Ingesting email: {subject} from {sender}")
+                    if not idempotency.check_and_lock_message(msg_id):
+                        logger.info(f"{msg_ctx}Skipping message: already processed or locked.")
+                        continue
+                    lock_acquired = True
 
-                # Mark as READ
-                service.users().messages().modify(userId="me", id=msg_id, body={"removeLabelIds": ["UNREAD"]}).execute()
+                    # Extract Body
+                    email_body_text = get_email_body(msg["payload"])
 
-                # Extract Body
-                email_body_text = get_email_body(msg["payload"])
+                    # Find Attachments
+                    parts = msg["payload"].get("parts", [])
+                    found_attachments = []
+                    from src.shared.utils import SUPPORTED_MIME_TYPES
 
-                # Find Attachments
-                parts = msg["payload"].get("parts", [])
-                found_attachments = []
-                from src.shared.utils import SUPPORTED_MIME_TYPES
-                SUPPORTED_EXTENSIONS = SUPPORTED_MIME_TYPES
+                    for part in parts:
+                        filename = part.get("filename", "")
+                        if filename:
+                            ext = os.path.splitext(filename.lower())[1]
+                            if ext in SUPPORTED_MIME_TYPES:
+                                if "data" in part["body"]:
+                                    file_data = base64.urlsafe_b64decode(part["body"]["data"])
+                                else:
+                                    att_id = part["body"]["attachmentId"]
+                                    att = (
+                                        service.users()
+                                        .messages()
+                                        .attachments()
+                                        .get(userId="me", messageId=msg_id, id=att_id)
+                                        .execute()
+                                    )
+                                    file_data = base64.urlsafe_b64decode(att["data"])
 
-                for part in parts:
-                    filename = part.get("filename", "")
-                    if filename:
-                        ext = os.path.splitext(filename.lower())[1]
-                        if ext in SUPPORTED_EXTENSIONS:
-                            # Get data
-                            if "data" in part["body"]:
-                                file_data = base64.urlsafe_b64decode(part["body"]["data"])
-                            else:
-                                att_id = part["body"]["attachmentId"]
-                                att = (
-                                    service.users()
-                                    .messages()
-                                    .attachments()
-                                    .get(userId="me", messageId=msg_id, id=att_id)
-                                    .execute()
+                                found_attachments.append(
+                                    {"data": file_data, "filename": filename, "mime_type": SUPPORTED_MIME_TYPES[ext]}
                                 )
-                                file_data = base64.urlsafe_b64decode(att["data"])
 
-                            found_attachments.append(
-                                {"data": file_data, "filename": filename, "mime_type": SUPPORTED_EXTENSIONS[ext]}
-                            )
+                    if found_attachments:
+                        all_published = True
+                        for att in found_attachments:
+                            safe_filename = os.path.basename(att["filename"]) or "attachment.bin"
+                            _, ext = os.path.splitext(safe_filename)
+                            fd, temp_path = tempfile.mkstemp(prefix="ingest_", suffix=ext or ".bin")
+                            with os.fdopen(fd, "wb") as f:
+                                f.write(att["data"])
 
-                if found_attachments:
-                    all_published = True
-                    for att in found_attachments:
-                        # 1. Upload to GCS
-                        temp_path = f"/tmp/ingest_{att['filename']}" if os.name != "nt" else f"ingest_{att['filename']}"
-                        with open(temp_path, "wb") as f:
-                            f.write(att["data"])
+                            try:
+                                gcs_uri = upload_to_gcs(temp_path, safe_filename)
+                                if not gcs_uri:
+                                    logger.error(f"{msg_ctx}Failed to upload {safe_filename} to GCS. Skipping event.")
+                                    all_published = False
+                                    continue
 
-                        try:
-                            gcs_uri = upload_to_gcs(temp_path, att["filename"])
-                            if not gcs_uri:
-                                logger.error(f"Failed to upload {att['filename']} to GCS. Skipping event.")
+                                email_meta = EmailMetadata(
+                                    message_id=msg_id,
+                                    thread_id=thread_id,
+                                    sender=sender,
+                                    subject=subject,
+                                    body_snippet=email_body_text[:1000] if email_body_text else "",
+                                )
+                                event = OrderIngestedEvent(
+                                    gcs_uri=gcs_uri,
+                                    bucket_name=settings.GCS_BUCKET_NAME,
+                                    blob_name=gcs_uri.replace(f"gs://{settings.GCS_BUCKET_NAME}/", ""),
+                                    filename=safe_filename,
+                                    mime_type=att["mime_type"],
+                                    email_metadata=email_meta,
+                                )
+                                if not self.publish_event(event):
+                                    all_published = False
+                            except Exception as e:
+                                logger.error(f"{msg_ctx}Error ingesting attachment {safe_filename}: {e}")
                                 all_published = False
-                                continue
+                            finally:
+                                if os.path.exists(temp_path):
+                                    os.remove(temp_path)
 
-                            # 2. Build Metadata
-                            email_meta = EmailMetadata(
-                                message_id=msg_id,
-                                thread_id=thread_id,
-                                sender=sender,
-                                subject=subject,
-                                body_snippet=email_body_text[:1000] if email_body_text else "",
+                        if all_published:
+                            service.users().messages().modify(
+                                userId="me", id=msg_id, body={"removeLabelIds": ["UNREAD"]}
+                            ).execute()
+                            processed_count += 1
+                            idempotency.mark_message_completed(msg_id, success=True)
+                        else:
+                            logger.warning(f"{msg_ctx}Keeping message unread due to partial/failed publish.")
+                            idempotency.mark_message_completed(
+                                msg_id,
+                                success=False,
+                                error_message="One or more attachments failed to upload/publish",
                             )
+                    else:
+                        logger.info("No supported attachments.")
+                        service.users().messages().modify(
+                            userId="me", id=msg_id, body={"removeLabelIds": ["UNREAD"]}
+                        ).execute()
+                        idempotency.mark_message_completed(msg_id, success=True)
 
-                            # 3. Create Event
-                            event = OrderIngestedEvent(
-                                gcs_uri=gcs_uri,
-                                bucket_name=settings.GCS_BUCKET_NAME,
-                                blob_name=gcs_uri.replace(f"gs://{settings.GCS_BUCKET_NAME}/", ""),
-                                filename=att["filename"],
-                                mime_type=att["mime_type"],
-                                email_metadata=email_meta,
-                            )
-
-                            # 4. Publish
-                            msg_id_pub = self.publish_event(event)
-                            if not msg_id_pub:
-                                all_published = False
-
-                        except Exception as e:
-                            logger.error(f"Error ingesting attachment {att['filename']}: {e}")
-                            all_published = False
-                        finally:
-                            if os.path.exists(temp_path):
-                                os.remove(temp_path)
-
-                    processed_count += 1
-                    idempotency.mark_message_completed(msg_id, success=all_published)
-                else:
-                    logger.info("No supported attachments.")
-                    idempotency.mark_message_completed(msg_id, success=True)
+                except Exception as msg_err:
+                    logger.error(f"{msg_ctx}Error while processing message: {msg_err}", exc_info=True)
+                    if lock_acquired:
+                        idempotency.mark_message_completed(msg_id, success=False, error_message=str(msg_err))
+                    continue
 
             return processed_count
 

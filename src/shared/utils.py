@@ -1,5 +1,9 @@
 import os
 
+from src.shared.logger import get_logger
+
+logger = get_logger(__name__)
+
 # Standard MIME type mappings for supported files
 SUPPORTED_MIME_TYPES = {
     ".pdf": "application/pdf",
@@ -44,8 +48,7 @@ def convert_pdf_bytes_to_images(pdf_bytes: bytes, dpi: int = 200) -> list[bytes]
     try:
         import fitz  # PyMuPDF
     except ImportError:
-        import logging
-        logging.getLogger(__name__).error("PyMuPDF (fitz) is not installed. Run: pip install pymupdf")
+        logger.error("PyMuPDF (fitz) is not installed. Run: pip install pymupdf")
         return []
 
     images = []
@@ -61,7 +64,6 @@ def convert_pdf_bytes_to_images(pdf_bytes: bytes, dpi: int = 200) -> list[bytes]
             images.append(img_bytes)
         doc.close()
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"Error converting PDF to images: {e}")
+        logger.error(f"Error converting PDF to images: {e}")
         
     return images

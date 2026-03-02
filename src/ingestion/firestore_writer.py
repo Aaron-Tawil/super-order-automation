@@ -1,5 +1,5 @@
-import os
 from datetime import datetime
+from typing import Any
 
 from google.cloud import firestore
 
@@ -37,3 +37,43 @@ def save_order_to_firestore(order: ExtractedOrder, source_file_uri: str) -> str:
     except Exception as e:
         logger.error(f"Failed to save to Firestore: {e}")
         return None
+
+
+def upsert_processing_event(
+    event_id: str,
+    *,
+    status: str,
+    stage: str,
+    details: dict[str, Any] | None = None,
+) -> bool:
+    """
+    Upsert processing lifecycle state for a single ingestion/processing event.
+    """
+    if not event_id:
+        logger.error("Cannot upsert processing event without event_id.")
+        return False
+
+    try:
+        db = firestore.Client(project=settings.PROJECT_ID)
+        collection_ref = db.collection(settings.FIRESTORE_PROCESSING_COLLECTION)
+        doc_ref = collection_ref.document(str(event_id))
+
+        payload = {
+            "event_id": str(event_id),
+            "status": status,
+            "stage": stage,
+            "updated_at": datetime.utcnow(),
+        }
+        if details:
+            payload["details"] = details
+
+        existing = doc_ref.get()
+        if not existing.exists:
+            payload["created_at"] = datetime.utcnow()
+
+        doc_ref.set(payload, merge=True)
+        logger.info(f"Processing event {event_id} -> {status}/{stage}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to upsert processing event {event_id}: {e}")
+        return False

@@ -52,6 +52,7 @@ def detect_supplier(
     invoice_file_path: str = None,
     invoice_mime_type: str = None,
     suppliers_csv: str = None,
+    trace_context: str = "",
 ) -> SupplierDetectionResult:
     """
     Legacy entry point for Phase 1 supplier detection.
@@ -61,6 +62,7 @@ def detect_supplier(
         invoice_file_path=invoice_file_path,
         invoice_mime_type=invoice_mime_type,
         suppliers_csv=suppliers_csv,
+        trace_context=trace_context,
     )
 
 
@@ -70,6 +72,7 @@ def extract_invoice_data(
     email_context: str = None,
     supplier_instructions: str = None,
     retry_count: int = 0,
+    trace_context: str = "",
 ) -> InvoiceExtractionResult:
     """
     Legacy entry point for Phase 2 invoice extraction.
@@ -80,6 +83,7 @@ def extract_invoice_data(
         email_context=email_context,
         supplier_instructions=supplier_instructions,
         retry_count=retry_count,
+        trace_context=trace_context,
     )
 
 
