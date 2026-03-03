@@ -19,6 +19,8 @@ gha-creds-*.json
 tests/output/
 scripts/output/
 scripts/tests/output/
+docs/firestore-audit.md
+docs/firestore-audit.json
 *.txt
 !requirements.txt
 !LICENSE
