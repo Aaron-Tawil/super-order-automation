@@ -18,7 +18,7 @@ import json
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +34,7 @@ from src.shared.models import ExtractedOrder, LineItem
 
 
 def now_utc_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def value_type(value: Any) -> str:
@@ -85,7 +85,7 @@ def collection_path(col_ref: firestore.CollectionReference) -> str:
     Return a stable collection path across Firestore client versions.
     """
     if hasattr(col_ref, "path"):
-        return str(getattr(col_ref, "path"))
+        return str(col_ref.path)
 
     raw_path = getattr(col_ref, "_path", None)
     if raw_path is None:
