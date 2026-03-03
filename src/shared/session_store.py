@@ -6,10 +6,8 @@ the email processor (Cloud Functions) and the web UI (Cloud Run).
 """
 
 import logging
-import os
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
 
 from google.cloud import firestore
 
@@ -131,25 +129,6 @@ def update_session_order(session_id: str, order) -> bool:
     except Exception as e:
         logging.error(f"Failed to update session {session_id}: {e}")
         return False
-
-
-def get_session_count() -> int:
-    """
-    Return estimate of active sessions.
-    Note: Exact count in Firestore can be expensive/slow for large collections.
-    """
-    try:
-        db = _get_db()
-        # Initial implementation: just count all (or use aggregation query if needed)
-        # For low volume, retrieving all IDs is okay-ish, but aggregation is better.
-        query = db.collection(settings.FIRESTORE_SESSIONS_COLLECTION).where(
-            filter=firestore.FieldFilter("expires_at", ">", datetime.utcnow())
-        )
-        agg_query = query.count()
-        return agg_query.get()[0][0].value
-    except Exception as e:
-        logging.error(f"Failed to count sessions: {e}")
-        return 0
 
 
 def update_session_metadata(session_id: str, metadata: dict) -> bool:

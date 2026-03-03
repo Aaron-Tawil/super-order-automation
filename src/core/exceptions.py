@@ -22,9 +22,3 @@ class SupplierMatchError(BaseAppException):
     """Raised when supplier cannot be identified."""
 
     pass
-
-
-class ConfigurationError(BaseAppException):
-    """Raised when configuration is missing or invalid."""
-
-    pass
