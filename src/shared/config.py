@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     # --- Google OAuth ---
     GOOGLE_CLIENT_ID: str = Field(validation_alias="GOOGLE_CLIENT_ID", default="")
     GOOGLE_CLIENT_SECRET: str = Field(validation_alias="GOOGLE_CLIENT_SECRET", default="")
+    MICROSOFT_CLIENT_ID: str = Field(validation_alias="MICROSOFT_CLIENT_ID", default="")
+    MICROSOFT_CLIENT_SECRET: str = Field(validation_alias="MICROSOFT_CLIENT_SECRET", default="")
+    MICROSOFT_TENANT_ID: str = Field(validation_alias="MICROSOFT_TENANT_ID", default="common")
     COOKIE_SECRET: str = Field(validation_alias=AliasChoices("COOKIE_SECRET", "DASHBOARD_COOKIE_SECRET"), default="")
     ALLOWED_EMAILS: str = Field(validation_alias=AliasChoices("ALLOWED_EMAILS", "ALLOWED_EMAILS_STR"), default="")
 

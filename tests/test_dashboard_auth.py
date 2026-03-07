@@ -18,6 +18,7 @@ def test_get_login_url_sets_signed_oauth_state_and_session(monkeypatch):
 
     assert payload is not None
     assert payload["session"] == "session-123"
+    assert payload["provider"] == auth.GOOGLE_PROVIDER
     assert auth._is_valid_oauth_state(payload)
 
 
@@ -30,7 +31,12 @@ def test_oauth_state_validation_rejects_tampered_and_expired_state(monkeypatch):
     # Freeze "now" so expiry behavior is deterministic.
     monkeypatch.setattr(auth.time, "time", lambda: 1_700_000_000)
 
-    payload = auth._build_oauth_state_payload(nonce="abc123", issued_at=1_700_000_000, session_id="sess-1")
+    payload = auth._build_oauth_state_payload(
+        nonce="abc123",
+        provider=auth.GOOGLE_PROVIDER,
+        issued_at=1_700_000_000,
+        session_id="sess-1",
+    )
     payload["sig"] = auth._sign_oauth_state(payload)
     assert auth._is_valid_oauth_state(payload)
 
@@ -40,6 +46,7 @@ def test_oauth_state_validation_rejects_tampered_and_expired_state(monkeypatch):
 
     expired = auth._build_oauth_state_payload(
         nonce="abc123",
+        provider=auth.GOOGLE_PROVIDER,
         issued_at=1_700_000_000 - auth.OAUTH_STATE_MAX_AGE_SECONDS - 1,
         session_id="sess-1",
     )
@@ -47,16 +54,50 @@ def test_oauth_state_validation_rejects_tampered_and_expired_state(monkeypatch):
     assert not auth._is_valid_oauth_state(expired)
 
 
-def test_persist_auth_cookies():
+def test_get_login_url_supports_microsoft_provider(monkeypatch):
+    fake_st = SimpleNamespace(session_state={})
+    monkeypatch.setattr(auth, "st", fake_st)
+    monkeypatch.setattr(auth.settings, "MICROSOFT_CLIENT_ID", "ms-client", raising=False)
+    monkeypatch.setattr(auth.settings, "MICROSOFT_CLIENT_SECRET", "ms-secret", raising=False)
+    monkeypatch.setattr(auth.settings, "MICROSOFT_TENANT_ID", "tenant-123", raising=False)
+
+    login_url = auth.get_login_url(session_id="session-abc", provider=auth.MICROSOFT_PROVIDER)
+    parsed = urllib.parse.urlparse(login_url)
+    params = urllib.parse.parse_qs(parsed.query)
+
+    assert "login.microsoftonline.com/tenant-123/oauth2/v2.0/authorize" in login_url
+    assert params["client_id"][0] == "ms-client"
+    state_payload = auth._decode_oauth_state(params["state"][0])
+    assert state_payload is not None
+    assert state_payload["provider"] == auth.MICROSOFT_PROVIDER
+    assert state_payload["session"] == "session-abc"
+
+
+def test_persist_auth_cookies_and_read_back_provider():
     class DummyCookies(dict):
         def save(self):
             return None
 
     cookies = DummyCookies()
-    assert auth._persist_auth_cookies(cookies, "user@example.com", "User Name")
+    assert auth._persist_auth_cookies(cookies, "user@example.com", "User Name", auth.MICROSOFT_PROVIDER)
     assert auth.AUTH_COOKIE_KEY in cookies
     payload = auth._decode_payload(cookies[auth.AUTH_COOKIE_KEY])
     assert auth._is_valid_auth_cookie(payload)
     assert payload is not None
     assert payload["email"] == "user@example.com"
     assert payload["name"] == "User Name"
+    assert payload["provider"] == auth.MICROSOFT_PROVIDER
+
+    email, name, provider = auth._read_auth_cookie(cookies)
+    assert email == "user@example.com"
+    assert name == "User Name"
+    assert provider == auth.MICROSOFT_PROVIDER
+
+
+def test_is_user_allowed_supports_domain_suffix_rule(monkeypatch):
+    monkeypatch.setattr(auth.settings, "ALLOWED_EMAILS", "admin@example.com, @superhome.co.il", raising=False)
+
+    assert auth.is_user_allowed("admin@example.com")
+    assert auth.is_user_allowed("sales@superhome.co.il")
+    assert auth.is_user_allowed("CEO@SUPERHOME.CO.IL")
+    assert not auth.is_user_allowed("user@other.com")

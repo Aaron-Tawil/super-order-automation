@@ -19,6 +19,14 @@ def test_allowed_emails_back_compat_for_allowed_emails_str(monkeypatch):
     assert cfg.allowed_emails == ["legacy@example.com"]
 
 
+def test_allowed_emails_supports_domain_entry(monkeypatch):
+    monkeypatch.setenv("ALLOWED_EMAILS", "admin@example.com, @superhome.co.il")
+
+    cfg = Settings()
+
+    assert cfg.allowed_emails == ["admin@example.com", "@superhome.co.il"]
+
+
 def test_cookie_secret_env_alias(monkeypatch):
     monkeypatch.setenv("DASHBOARD_COOKIE_SECRET", "cookie-secret-value")
     monkeypatch.delenv("COOKIE_SECRET", raising=False)
@@ -26,3 +34,15 @@ def test_cookie_secret_env_alias(monkeypatch):
     cfg = Settings()
 
     assert cfg.COOKIE_SECRET == "cookie-secret-value"
+
+
+def test_microsoft_oauth_settings(monkeypatch):
+    monkeypatch.setenv("MICROSOFT_CLIENT_ID", "ms-client")
+    monkeypatch.setenv("MICROSOFT_CLIENT_SECRET", "ms-secret")
+    monkeypatch.setenv("MICROSOFT_TENANT_ID", "tenant-abc")
+
+    cfg = Settings()
+
+    assert cfg.MICROSOFT_CLIENT_ID == "ms-client"
+    assert cfg.MICROSOFT_CLIENT_SECRET == "ms-secret"
+    assert cfg.MICROSOFT_TENANT_ID == "tenant-abc"
