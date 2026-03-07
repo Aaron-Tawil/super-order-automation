@@ -253,7 +253,9 @@ def process_order_event(cloud_event: Any):
                     )
                 msg_body += "</div>"
 
-            edit_url = f"{settings.WEB_UI_URL}/?session={session_id}"
+            # Note: For session link sent via email, it assumes the Cloud Function is in Prod
+            # However `get_web_ui_url` now behaves smartly
+            edit_url = f"{settings.get_web_ui_url}/?session={session_id}"
             msg_body += f"<p>✏️ {get_text('email_edit_link').strip()}<br>"
             msg_body += f"<a href='{edit_url}'>{edit_url}</a></p>"
 

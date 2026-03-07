@@ -115,6 +115,6 @@ We store parsing rules and supplier metadata in Firestore.
 
 ### Security Note
 
-*   **Design Goal**: Use Google Identity-Aware Proxy (IAP) to protect the Cloud Run service.
-*   **Current Implementation**: Cloud Run service is deployed with `--allow-unauthenticated` for MVP ease of access. 
-*   **Future Hardening**: Re-enable internal ingress only and configure Load Balancer + IAP.
+*   **Design Goal**: Provide simple, secure access to the dashboard for specific authorized users.
+*   **Current Implementation**: The Streamlit dashboard uses a native Google Sign-In (OAuth 2.0) flow with an email allowlist (`ALLOWED_EMAILS` in `.env`). The Cloud Run service itself is deployed with `--allow-unauthenticated`, but the Streamlit app intercepts requests and forces login. 
+*   **Future Hardening**: If enterprise-grade security is required, re-enable internal ingress only and configure a Global HTTP(S) Load Balancer + Google Identity-Aware Proxy (IAP).

@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(validation_alias="LOG_LEVEL", default="INFO")
     ENVIRONMENT: str = Field(validation_alias="ENVIRONMENT", default="dev")
 
+    # --- Google OAuth ---
+    GOOGLE_CLIENT_ID: str = Field(validation_alias="GOOGLE_CLIENT_ID", default="")
+    GOOGLE_CLIENT_SECRET: str = Field(validation_alias="GOOGLE_CLIENT_SECRET", default="")
+    COOKIE_SECRET: str = Field(validation_alias=AliasChoices("COOKIE_SECRET", "DASHBOARD_COOKIE_SECRET"), default="")
+    ALLOWED_EMAILS: str = Field(validation_alias=AliasChoices("ALLOWED_EMAILS", "ALLOWED_EMAILS_STR"), default="")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -91,6 +97,24 @@ class Settings(BaseSettings):
         
         env_list = [n.strip() for n in self.BLACKLIST_NAMES_STR.split(",") if n.strip()]
         return list(set(base_list + env_list))
+
+    @property
+    def allowed_emails(self) -> list[str]:
+        """Parsed list of allowed emails for OAuth login."""
+        if not self.ALLOWED_EMAILS:
+            return []
+            
+        # Clean up potential leading/trailing quotes from the .env file parsing
+        clean_str = self.ALLOWED_EMAILS.strip().strip("'").strip('"')
+        
+        return [e.strip().lower() for e in clean_str.split(",") if e.strip()]
+
+    @property
+    def get_web_ui_url(self) -> str:
+        """Returns the configured Cloud Run URL in production, or localhost in development."""
+        if self.is_cloud_runtime:
+            return self.WEB_UI_URL
+        return "http://localhost:8501/"
 
     @property
     def is_cloud_runtime(self) -> bool:

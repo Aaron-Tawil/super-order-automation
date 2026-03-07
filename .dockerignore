@@ -4,6 +4,9 @@
 
 # Virtual environments
 .venv
+.venv*/
+.venv-linux/
+.venv-win/
 venv
 
 # IDE
@@ -18,8 +21,12 @@ token.json
 token.pickle
 credentials.json
 .env
+.env.*
 env.yaml
 deploy_env.yaml
+env_vars.yaml
+.streamlit/secrets.toml
+.streamlit/.cookie_secret
 
 # Python cache
 __pycache__
@@ -28,6 +35,13 @@ __pycache__
 # Testing & dev tools
 tests/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
 .pre-commit-config.yaml
 
 # Build artifacts

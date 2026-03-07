@@ -1,26 +1,55 @@
-__pycache__
-.venv
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments (Windows + WSL)
+.venv/
+.venv*/
+venv/
+
+# Local env files and secrets
 .env
-*.pyc
+.env.*
+!.env.example
 token.json
 token.pickle
 credentials.json
 env.yaml
 deploy_env.yaml
-*.log
+env_vars.yaml
+.streamlit/secrets.toml
+.streamlit/.cookie_secret
+gha-creds-*.json
+
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+.python-version
+
+# OS / IDE
 .DS_Store
 .idea/
 .vscode/
+
+# Local data and generated outputs
 data-excel/
 tests-data/
-
-.gemini/
-gha-creds-*.json
 tests/output/
 scripts/output/
 scripts/tests/output/
 docs/firestore-audit.md
 docs/firestore-audit.json
+
+# Agent workspace artifacts
+.gemini/
+
+# Keep broad text ignore behavior from existing repo policy
 *.txt
 !requirements.txt
 !LICENSE
@@ -29,3 +58,5 @@ docs/firestore-audit.json
 !DEPLOYMENT.md
 !task.md
 
+# Misc
+*.log

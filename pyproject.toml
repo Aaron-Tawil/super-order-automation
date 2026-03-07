@@ -11,6 +11,7 @@ dependencies = [
     "python-dotenv",
     "tenacity>=8.2.0",
     # Gmail Integration
+    "google-auth",
     "google-auth-oauthlib",
     "google-api-python-client",
     # Web UI
@@ -36,6 +37,7 @@ dependencies = [
     "pypdf>=6.7.1",
     "pymupdf>=1.23.0",
     "xlrd>=2.0.2",
+    "streamlit-cookies-manager>=0.2.0",
 ]
 
 [dependency-groups]
@@ -80,3 +82,6 @@ indent-style = "space"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.uv]                                                                                                                                                         
+managed = true

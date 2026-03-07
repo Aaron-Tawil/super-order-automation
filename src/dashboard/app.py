@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.dashboard import items_management, supplier_management
+from src.dashboard import auth, items_management, supplier_management
 from src.data.items_service import ItemsService
 from src.data.supplier_service import SupplierService
 from src.extraction.vertex_client import init_client
@@ -41,23 +41,30 @@ if not settings.GEMINI_API_KEY and not settings.PROJECT_ID:
 # Page config
 st.set_page_config(page_title=get_text("dashboard_title"), layout="wide", initial_sidebar_state="expanded")
 
-
-# Load external CSS
+# Load external CSS globally BEFORE authentication stops the script
 def load_css(file_path):
     with open(file_path) as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-
 css_path = os.path.join(os.path.dirname(__file__), "styles.css")
 load_css(css_path)
+
+# --- Authentication ---
+auth.require_login()
 
 # --- Session Loading Logic ---
 # Check for session token in URL (from email link)
 query_params = st.query_params
 session_id = query_params.get("session")
+if isinstance(session_id, list):
+    session_id = session_id[0] if session_id else None
+
+if not session_id:
+    session_id = st.session_state.get(auth.POST_AUTH_SESSION_KEY)
 
 if session_id and "extracted_data" not in st.session_state:
     session = get_session(session_id)
+    st.session_state.pop(auth.POST_AUTH_SESSION_KEY, None)
     if session:
         # Load order data from session (already a dict from JSON file)
         order = session["order"]
@@ -78,6 +85,14 @@ if "page" not in st.session_state:
 # Sidebar for navigation
 with st.sidebar:
     st.title(get_text("nav_title"))
+    
+    # Add User status at the very top of navigation
+    if "user_email" in st.session_state:
+        st.caption(get_text("auth_logged_in_as", email=st.session_state['user_email']))
+        if st.button(get_text("auth_btn_logout"), width="stretch"):
+            auth.logout()
+        st.divider()
+
     if st.button(get_text("nav_dashboard"), width="stretch"):
         st.session_state["page"] = "dashboard"
         st.rerun()
@@ -530,3 +545,4 @@ if "extracted_data" in st.session_state:
                         import traceback
 
                         st.code(traceback.format_exc())
+

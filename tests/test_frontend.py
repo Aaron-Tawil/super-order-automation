@@ -8,6 +8,7 @@ def test_dashboard_load():
     """Test that the dashboard loads without error."""
     # Patch dependencies used at module level or early import
     with (
+        patch("src.dashboard.auth.require_login"),
         patch("src.dashboard.app.init_client"),
         patch("src.dashboard.app.get_session"),
         patch("src.data.items_service.ItemsService"),
@@ -26,6 +27,7 @@ def test_dashboard_file_upload_ui():
     """Test that file upload widget is present when not coming from email."""
     # Mock session state empty
     with (
+        patch("src.dashboard.auth.require_login"),
         patch("src.dashboard.app.init_client"),
         patch("src.dashboard.app.get_session"),
         patch("src.data.items_service.ItemsService"),
@@ -42,6 +44,7 @@ def test_dashboard_file_upload_ui():
 def test_dashboard_navigation():
     """Test sidebar navigation."""
     with (
+        patch("src.dashboard.auth.require_login"),
         patch("src.dashboard.app.init_client"),
         patch("src.dashboard.app.get_session"),
         patch("src.data.items_service.ItemsService"),

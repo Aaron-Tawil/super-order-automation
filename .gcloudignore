@@ -2,14 +2,22 @@
 .git
 .gitignore
 .venv
+.venv*/
+.venv-linux/
+.venv-win/
 venv
 __pycache__
 *.pyc
 
 # Local secrets & data
 .env
+.env.*
+!.env.example
 env.yaml
 deploy_env.yaml
+env_vars.yaml
+.streamlit/secrets.toml
+.streamlit/.cookie_secret
 token.json
 token.pickle
 credentials.json
@@ -22,6 +30,13 @@ run_mvp.py
 *.log
 tests/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
 .pre-commit-config.yaml
 uv.lock
 pyproject.toml
