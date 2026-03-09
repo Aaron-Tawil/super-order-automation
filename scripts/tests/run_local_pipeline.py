@@ -111,8 +111,10 @@ def run_pipeline(file_path: str, sender: str = "test@example.com"):
             
             # 1. JSON Dump
             json_path = os.path.join(output_dir, f"order_{safe_invoice}.json")
+            order_dict = json.loads(order.model_dump_json())
+            order_dict["created_at"] = datetime.now().isoformat()  # mirrors Firestore metadata
             with open(json_path, "w", encoding="utf-8") as f:
-                f.write(order.model_dump_json(indent=4))
+                json.dump(order_dict, f, indent=4, ensure_ascii=False)
             logger.info(f"{ctx}📄 Saved JSON: {json_path}")
 
             # 2. Order Excel
@@ -138,3 +140,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     run_pipeline(args.file, args.sender)
+    # yfinance spawns non-daemon threads for HTTP connection pooling that prevent
+    # clean process exit without an explicit sys.exit().
+    sys.exit(0)
