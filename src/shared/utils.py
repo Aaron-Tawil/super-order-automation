@@ -1,5 +1,7 @@
 import os
+from email.utils import parseaddr
 
+from src.shared.config import settings
 from src.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -67,3 +69,23 @@ def convert_pdf_bytes_to_images(pdf_bytes: bytes, dpi: int = 200) -> list[bytes]
         logger.error(f"Error converting PDF to images: {e}")
         
     return images
+
+
+def extract_sender_email(sender: str | None) -> str:
+    """
+    Extract a normalized email address from a sender string.
+    Handles formats like 'Name <user@example.com>' and plain addresses.
+    """
+    if not sender:
+        return ""
+    _, parsed_email = parseaddr(sender)
+    email = (parsed_email or sender).strip().lower()
+    return email if "@" in email else ""
+
+
+def is_test_sender(sender: str | None) -> bool:
+    """
+    Returns True when sender belongs to configured test sender emails.
+    """
+    sender_email = extract_sender_email(sender)
+    return bool(sender_email and sender_email in settings.test_order_emails)

@@ -18,19 +18,24 @@ from src.ingestion.gmail_utils import get_gmail_service, send_reply
 from src.shared.config import settings
 from src.shared.idempotency_service import IdempotencyService
 from src.shared.logger import get_logger
-from src.shared.session_store import create_session
 from src.shared.translations import get_text
+from src.shared.utils import is_test_sender
 
 logger = get_logger(__name__)
 
 
 def _safe_temp_path(filename: str) -> str:
-    """Build a collision-resistant temp path for downloaded source files."""
-    safe_name = os.path.basename(filename or "document.bin")
-    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", safe_name).strip("._")
-    if not safe_name:
-        safe_name = "document.bin"
-    unique_name = f"{uuid.uuid4().hex}_{safe_name}"
+    """Build a collision-resistant temp path for downloaded source files using UUID for safety."""
+    raw_name = os.path.basename((filename or "").strip())
+    
+    # Extract extension reliably
+    _, ext = os.path.splitext(raw_name.lower())
+    if not ext or not ext.startswith("."):
+        # Fallback for cases where splitext might fail or extension is missing
+        ext_match = re.search(r"(\.[A-Za-z0-9]{1,16})$", raw_name.lower())
+        ext = ext_match.group(1) if ext_match else ".bin"
+    
+    unique_name = f"{uuid.uuid4().hex}{ext}"
     return f"/tmp/{unique_name}" if os.name != "nt" else f"temp_{unique_name}"
 
 
@@ -69,6 +74,7 @@ def process_order_event(cloud_event: Any):
     processing_lock = None
     temp_path = None
     attachments = []
+    attachment_names: dict[str, str] = {}
     event_id = str(getattr(cloud_event, "id", "unknown_event"))
     message_id = ""
     pubsub_message = ""
@@ -173,6 +179,11 @@ def process_order_event(cloud_event: Any):
 
         logger.info(f"{ctx}✅ Successfully extracted {len(orders)} order(s).")
         attachments = [temp_path]
+        original_attachment_name = os.path.basename((event.filename or "").strip()) or "original_document"
+        attachment_names[temp_path] = original_attachment_name
+        is_test_order = is_test_sender(event.email_metadata.sender)
+        if is_test_order:
+            logger.info(f"{ctx}Marking extracted orders as test (sender={event.email_metadata.sender})")
 
         # Build Message Body (HTML with RTL support)
         msg_body = f"""
@@ -182,7 +193,11 @@ def process_order_event(cloud_event: Any):
             """
 
         for i, order in enumerate(orders):
-            logger.info(f"{ctx}--- Processing Order {i + 1}/{len(orders)}: Invoice {order.invoice_number or 'Unknown'} ---")
+            logger.info(
+                f"{ctx}--- Processing Order {i + 1}/{len(orders)}: "
+                f"Invoice {order.invoice_number or 'Unknown'} ---"
+            )
+            order.is_test = is_test_order
 
             new_items_count = len(result.new_items_data) if i == 0 else 0
 
@@ -199,17 +214,19 @@ def process_order_event(cloud_event: Any):
                 generate_new_items_excel(fake_new_items, final_code, new_items_path)
                 attachments.append(new_items_path)
 
-            doc_id = save_order_to_firestore(order, event.gcs_uri)
-            session_id = create_session(
+            doc_id = save_order_to_firestore(
                 order,
+                event.gcs_uri,
+                is_test=is_test_order,
                 metadata={
                     "subject": event.email_metadata.subject,
                     "sender": event.email_metadata.sender,
                     "filename": event.filename,
                     "phase1_reasoning": result.phase1_reasoning,
                 },
+                new_items_data=result.new_items_data if i == 0 else None,
             )
-            logger.info(f"{ctx}✅ Order saved to Firestore (ID: {doc_id}). Session created: {session_id}")
+            logger.info(f"{ctx}✅ Order saved to Firestore (ID: {doc_id}).")
 
             safe_invoice_num = re.sub(r"[^a-zA-Z0-9_-]", "_", str(order.invoice_number))
             safe_supplier_code = re.sub(r"[^a-zA-Z0-9_-]", "_", str(final_code))
@@ -240,7 +257,10 @@ def process_order_event(cloud_event: Any):
             msg_body += "</ul>"
 
             if order.notes or order.math_reasoning or order.qty_reasoning:
-                msg_body += "<div style='background-color: #f9f9f9; padding: 10px; border-radius: 5px; margin: 10px 0;'>"
+                msg_body += (
+                    "<div style='background-color: #f9f9f9; padding: 10px; "
+                    "border-radius: 5px; margin: 10px 0;'>"
+                )
                 if order.notes:
                     msg_body += f"<strong>{get_text('ai_notes_title')}</strong><br>{order.notes}<br>"
                 if order.math_reasoning:
@@ -253,9 +273,9 @@ def process_order_event(cloud_event: Any):
                     )
                 msg_body += "</div>"
 
-            # Note: For session link sent via email, it assumes the Cloud Function is in Prod
+            # Note: The Cloud Function is assumed to be in Prod
             # However `get_web_ui_url` now behaves smartly
-            edit_url = f"{settings.get_web_ui_url}/?session={session_id}"
+            edit_url = f"{settings.get_web_ui_url}/?order_id={doc_id}"
             msg_body += f"<p>✏️ {get_text('email_edit_link').strip()}<br>"
             msg_body += f"<a href='{edit_url}'>{edit_url}</a></p>"
 
@@ -272,6 +292,7 @@ def process_order_event(cloud_event: Any):
                 event.email_metadata.subject,
                 msg_body,
                 attachment_paths=attachments,
+                attachment_names=attachment_names,
                 is_html=True,
             )
             logger.info(f"{ctx}✅ Pipeline complete. Email sent.")
@@ -280,7 +301,12 @@ def process_order_event(cloud_event: Any):
             event_id,
             status="COMPLETED",
             stage="FINISHED",
-            details={"orders_count": len(orders), "supplier_code": final_code, "filename": event.filename},
+            details={
+                "orders_count": len(orders),
+                "supplier_code": final_code,
+                "filename": event.filename,
+                "is_test": is_test_order,
+            },
         )
         processing_lock.mark_message_completed(event_id, success=True)
 

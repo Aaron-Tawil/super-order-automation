@@ -7,6 +7,11 @@ VALIDATION_TOLERANCE = 5.0
 # Maximum number of retries for extraction
 MAX_RETRIES = 1
 
+# --- Model Configuration ---
+EXTRACTION_MODEL_TRIAL_1 = "gemini-2.5-flash"   # Fast model for first attempt
+EXTRACTION_MODEL_TRIAL_2 = "gemini-2.5-pro"     # Stronger model for retry
+SUPPLIER_DETECTION_MODEL = "gemini-2.5-flash"   # Phase 1 supplier detection
+
 # --- Blacklists & Filters ---
 
 # Emails and domains to ignore during supplier detection (e.g. company's own emails)
@@ -25,4 +30,4 @@ BLACKLIST_IDS = [
 ]
 
 # Company names to ignore during supplier detection (our own company)
-BLACKLIST_NAMES = ["סופר הום", "שטובה אינטרנשיונל"]
+BLACKLIST_NAMES = ["סופר הום", "שטובה אינטרנשיונל","שטובה"]

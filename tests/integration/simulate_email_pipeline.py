@@ -73,7 +73,7 @@ def run_simulation(file_path):
     email_meta = EmailMetadata(
         message_id="sim_msg_001",
         thread_id="sim_thread_001",
-        sender="simulation@localhost",
+        sender="aarondavidtawil@gmail.com",
         subject=f"Simulation Invoice {filename}",
         received_at=datetime.utcnow(),
         body_snippet="This is a simulated email body for testing purposes.",

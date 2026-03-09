@@ -54,7 +54,7 @@ def run_pipeline(file_path):
     
     # Mock Email Metadata for local test
     mock_email_meta = {
-        "sender": "example@supplier.com", 
+        "sender": "aarondavidtawil@gmail.com",
         "subject": f"Invoice for {os.path.basename(file_path)}",
         "body": "Please find attached.",
         "run_id": run_id,

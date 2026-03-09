@@ -145,6 +145,8 @@ class OrderProcessor:
                     )
                     logger.warning(f"{trace_context}{msg}")
                     order.warnings.append(msg)
+                    if trial_version == 1:
+                        critical_failure_found = True
                 else:
                     logger.info(f"{trace_context}✅ Quantity validation passed. Diff: {diff_qty}")
 

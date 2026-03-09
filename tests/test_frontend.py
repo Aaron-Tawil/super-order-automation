@@ -11,29 +11,36 @@ def test_dashboard_load():
         patch("src.dashboard.auth.require_login"),
         patch("src.dashboard.app.init_client"),
         patch("src.dashboard.app.get_session"),
+        patch("src.dashboard.app.OrdersService"),
+        patch("src.dashboard.inbox.OrdersService") as mock_orders_service,
         patch("src.data.items_service.ItemsService"),
         patch("src.data.supplier_service.SupplierService"),
     ):
+        mock_orders_service.return_value.list_orders.return_value = []
         at = AppTest.from_file("src/dashboard/app.py")
         at.run()
 
         # Check basic elements
         assert not at.exception
-        # "🧾 מערכת אוטומציה להזמנות" is the Hebrew title
-        assert "אוטומציה" in at.title[0].value
+        # Dashboard is the default view and inbox is embedded below it.
+        assert any("מערכת אוטומציה להזמנות" in title.value for title in at.title)
+        assert any("תיבת הזמנות" in title.value for title in at.title)
 
 
 def test_dashboard_file_upload_ui():
-    """Test that file upload widget is present when not coming from email."""
-    # Mock session state empty
+    """Test that file upload widget is present on order workspace."""
     with (
         patch("src.dashboard.auth.require_login"),
         patch("src.dashboard.app.init_client"),
         patch("src.dashboard.app.get_session"),
+        patch("src.dashboard.app.OrdersService"),
+        patch("src.dashboard.inbox.OrdersService") as mock_orders_service,
         patch("src.data.items_service.ItemsService"),
         patch("src.data.supplier_service.SupplierService"),
     ):
+        mock_orders_service.return_value.list_orders.return_value = []
         at = AppTest.from_file("src/dashboard/app.py")
+        at.session_state["page"] = "dashboard"
         at.run()
 
         # Should see file uploader
@@ -47,13 +54,16 @@ def test_dashboard_navigation():
         patch("src.dashboard.auth.require_login"),
         patch("src.dashboard.app.init_client"),
         patch("src.dashboard.app.get_session"),
+        patch("src.dashboard.app.OrdersService"),
+        patch("src.dashboard.inbox.OrdersService") as mock_orders_service,
         patch("src.data.items_service.ItemsService"),
         patch("src.data.supplier_service.SupplierService"),
     ):
+        mock_orders_service.return_value.list_orders.return_value = []
         at = AppTest.from_file("src/dashboard/app.py")
         at.run()
 
         # Sidebar buttons
-        # "🏠 דשבורד", "🏢 ספקים", "📦 פריטים"
+        # "🏠 דשבורד", "⚙️ ניהול ספקים", "📦 ניהול פריטים"
         assert len(at.sidebar.button) >= 3
         assert "דשבורד" in at.sidebar.button[0].label

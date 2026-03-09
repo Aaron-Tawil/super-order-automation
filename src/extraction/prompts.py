@@ -86,7 +86,7 @@ def _get_invoice_extraction_prompt_trial_1(email_context: str, supplier_instruct
     prompt_text = ""
     if email_context:
         prompt_text += f"""
-    CONTEXT FROM EMAIL BODY:
+    📧 CONTEXT FROM EMAIL BODY (read for reference — binding instructions below):
     {email_context}
     
     """
@@ -158,8 +158,21 @@ def _get_invoice_extraction_prompt_trial_1(email_context: str, supplier_instruct
     if supplier_instructions:
         prompt_text += f"""
     
-    ⚠️ SUPPLIER-SPECIFIC OVERRIDES (HIGHEST PRIORITY):
+    ⚠️ SUPPLIER-SPECIFIC OVERRIDES (HIGH PRIORITY — overrides general rules above):
+    The following instructions are specific to THIS supplier. They override any conflicting general rules above,
+    but are themselves overridden by any explicit instructions found in the EMAIL BODY (see below).
     {supplier_instructions}
+    """
+
+    if email_context:
+        prompt_text += f"""
+
+    🚨 EMAIL BODY INSTRUCTIONS (ABSOLUTE HIGHEST PRIORITY — overrides EVERYTHING above):
+    The sender may have included special one-time instructions in the email body.
+    Any instruction found in the email body OVERRIDES the supplier-specific instructions AND the general rules.
+    Re-read the email body carefully and apply any explicit instructions the sender wrote:
+
+    {email_context}
     """
 
     return prompt_text
@@ -173,7 +186,7 @@ def _get_invoice_extraction_prompt_trial_2(email_context: str, supplier_instruct
     prompt_text = ""
     if email_context:
         prompt_text += f"""
-    CONTEXT FROM EMAIL BODY:
+    📧 CONTEXT FROM EMAIL BODY (read for reference — binding instructions below):
     {email_context}
     
     """
@@ -251,12 +264,22 @@ def _get_invoice_extraction_prompt_trial_2(email_context: str, supplier_instruct
     if supplier_instructions:
         prompt_text += f"""
     
-    ⚠️ SUPPLIER-SPECIFIC OVERRIDES (HIGHEST PRIORITY):
-    The following instructions are specific to THIS supplier and OVERRIDE any conflicting rules above.
-    If there is any conflict between the general instructions above and the supplier-specific instructions below,
-    ALWAYS follow the supplier-specific instructions.
+    ⚠️ SUPPLIER-SPECIFIC OVERRIDES (HIGH PRIORITY — overrides general rules above):
+    The following instructions are specific to THIS supplier and OVERRIDE any conflicting general rules above.
+    They are themselves overridden by any explicit instructions found in the EMAIL BODY (see below).
     
     {supplier_instructions}
+    """
+
+    if email_context:
+        prompt_text += f"""
+
+    🚨 EMAIL BODY INSTRUCTIONS (ABSOLUTE HIGHEST PRIORITY — overrides EVERYTHING above):
+    The sender may have included special one-time instructions in the email body.
+    Any instruction found in the email body OVERRIDES the supplier-specific instructions AND the general rules.
+    Re-read the email body carefully and apply any explicit instructions the sender wrote:
+
+    {email_context}
     """
 
     return prompt_text

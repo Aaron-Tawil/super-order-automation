@@ -51,10 +51,21 @@ def get_gmail_service():
     return build("gmail", "v1", credentials=creds)
 
 
-def send_reply(service, thread_id, msg_id_header, to, subject, body_text, attachment_paths=None, is_html=False):
+def send_reply(
+    service,
+    thread_id,
+    msg_id_header,
+    to,
+    subject,
+    body_text,
+    attachment_paths=None,
+    attachment_names=None,
+    is_html=False,
+):
     """
     Sends a reply to the original email thread.
     attachment_paths: List of file paths to attach.
+    attachment_names: dict mapping attachment_path -> desired_filename (optional)
     is_html: If True, sends as text/html, otherwise text/plain.
     """
     try:
@@ -71,7 +82,7 @@ def send_reply(service, thread_id, msg_id_header, to, subject, body_text, attach
         if attachment_paths:
             if isinstance(attachment_paths, str):
                 attachment_paths = [attachment_paths]
-                
+
             for attachment_path in attachment_paths:
                 if attachment_path and os.path.exists(attachment_path):
                     content_type, encoding = mimetypes.guess_type(attachment_path)
@@ -85,9 +96,21 @@ def send_reply(service, thread_id, msg_id_header, to, subject, body_text, attach
                     part = MIMEBase(main_type, sub_type)
                     part.set_payload(file_data)
                     encoders.encode_base64(part)
+
+                    # Use custom name if provided, otherwise fallback to basename
+                    display_name = (attachment_names or {}).get(attachment_path) or os.path.basename(attachment_path)
+                    
+                    # Ensure extension has a dot if it's missing (failsafe)
+                    if "." not in display_name and "_" in display_name:
+                         # Heuristic: if name is like "uuid_xlsx", fix it to "uuid.xlsx"
+                         for ext in ["xlsx", "pdf", "xls", "csv"]:
+                             if display_name.endswith(f"_{ext}"):
+                                 display_name = display_name[:-len(ext)-1] + f".{ext}"
+                                 break
+
                     part.add_header(
                         "Content-Disposition",
-                        f"attachment; filename={os.path.basename(attachment_path)}",
+                        f'attachment; filename="{display_name}"',
                     )
                     message.attach(part)
 

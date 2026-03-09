@@ -10,7 +10,14 @@ from src.shared.models import ExtractedOrder
 logger = get_logger(__name__)
 
 
-def save_order_to_firestore(order: ExtractedOrder, source_file_uri: str) -> str:
+def save_order_to_firestore(
+    order: ExtractedOrder,
+    source_file_uri: str,
+    *,
+    is_test: bool = False,
+    metadata: dict[str, Any] | None = None,
+    new_items_data: list[dict[str, Any]] | None = None,
+) -> str:
     """
     Saves the extracted order to Firestore.
     Returns the document ID.
@@ -24,8 +31,25 @@ def save_order_to_firestore(order: ExtractedOrder, source_file_uri: str) -> str:
 
         # Add metadata
         order_dict["created_at"] = datetime.utcnow()
+        order_dict["updated_at"] = datetime.utcnow()
         order_dict["gcs_uri"] = source_file_uri
         order_dict["status"] = "EXTRACTED"
+        order_dict["is_test"] = bool(is_test or order_dict.get("is_test", False))
+        order_dict["line_items_count"] = len(order_dict.get("line_items", []) or [])
+        order_dict["warnings_count"] = len(order_dict.get("warnings", []) or [])
+        order_dict["has_warnings"] = bool(order_dict["warnings_count"])
+        order_dict["is_unknown_supplier"] = str(order_dict.get("supplier_code", "")).upper() == "UNKNOWN"
+
+        if new_items_data:
+            order_dict["new_items"] = new_items_data
+
+        if "ui_metadata" not in order_dict or not isinstance(order_dict["ui_metadata"], dict):
+            order_dict["ui_metadata"] = {}
+
+        metadata = metadata or {}
+        for field in ("sender", "subject", "filename"):
+            if metadata.get(field):
+                order_dict["ui_metadata"][field] = metadata[field]
 
         # Create a new document
         doc_ref = collection_ref.document()  # Auto-generate ID

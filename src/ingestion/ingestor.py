@@ -1,6 +1,7 @@
 import base64
 import os
 import tempfile
+import uuid
 
 from google.cloud import pubsub_v1
 
@@ -142,9 +143,15 @@ class IngestionService:
                     if found_attachments:
                         all_published = True
                         for att in found_attachments:
-                            safe_filename = os.path.basename(att["filename"]) or "attachment.bin"
-                            _, ext = os.path.splitext(safe_filename)
-                            fd, temp_path = tempfile.mkstemp(prefix="ingest_", suffix=ext or ".bin")
+                            # Generate a safe, UUID-based filename for storage and event
+                            raw_original = os.path.basename(att["filename"]) or "attachment"
+                            _, ext = os.path.splitext(raw_original.lower())
+                            if not ext or not ext.startswith("."):
+                                ext = ".bin"
+                            
+                            safe_filename = f"{uuid.uuid4().hex}{ext}"
+                            
+                            fd, temp_path = tempfile.mkstemp(prefix="ingest_", suffix=ext)
                             with os.fdopen(fd, "wb") as f:
                                 f.write(att["data"])
 

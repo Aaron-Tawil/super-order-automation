@@ -6,6 +6,7 @@ from google.genai import types
 from src.extraction.prompts import get_invoice_extraction_prompt
 from src.extraction.schemas import raw_response_schema
 from src.shared.ai_cost import calculate_cost
+from src.shared.constants import EXTRACTION_MODEL_TRIAL_1, EXTRACTION_MODEL_TRIAL_2
 from src.shared.logger import get_logger
 from src.shared.models import MultiOrderResponse
 from src.shared.utils import convert_pdf_bytes_to_images, get_mime_type, is_excel_file
@@ -39,7 +40,7 @@ def extract_invoice_data(
         trial=trial_version,
     )
 
-    model_name = "gemini-2.5-pro" if trial_version == 2 else "gemini-2.5-flash"
+    model_name = EXTRACTION_MODEL_TRIAL_2 if trial_version == 2 else EXTRACTION_MODEL_TRIAL_1
 
     logger.info(f"{trace_context}>>> Phase 2: Starting Extraction (Attempt {retry_count}) using {model_name}...")
     logger.info(f"{trace_context}File: {os.path.basename(file_path)} | Trial Version: {trial_version}")

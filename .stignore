@@ -1,5 +1,7 @@
 pycache
 .venv
+.venv-linux
+.venv-win
 .git
 node_modules/
 venv/

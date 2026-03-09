@@ -1,110 +1,233 @@
-# Project Review & Improvements Proposal
+# Dashboard Improvement Proposal (Expanded)
 
-## Executive Summary
-The "Super Order Automation" project is a functional prototype that successfully integrates Gmail, Vertex AI, and a Streamlit dashboard to automate order entry. To move from a prototype to a **feature-rich, robust, and reliable production system**, several architectural refactoring steps and feature additions are recommended. 
+## 1) Product Direction
+The dashboard should evolve from a single-order editor into a two-level workspace:
 
-The primary goal is to **decouple business logic from interface logic**, ensure **type safety**, and improve **observability**.
+1. `Inbox Dashboard` for operations and monitoring all processed orders.
+2. `Order Workspace` for one order at a time (deep link from email), including a prompt playground.
 
----
+This keeps the email flow intact while adding an operations view for scale.
 
-## 1. Architecture & Design Patterns
+## 2) Primary Windows
 
-### Current State
-- **Monolithic Scripting**: Logic is often embedded directly in `process_invoice` or `app.py`.
-- **Duplication**: Similar logic potentially exists in `email_processor.py` (Cloud Function) and `app.py` (Dashboard Retry).
-- **Synchronous Bottlenecks**: Email processing appears to handle heavy AI tasks synchronously.
+### A. Inbox Dashboard (All Orders)
+Purpose: fast triage, search, filtering, and navigation into each order.
 
-### Recommendations
+Core components:
+- Top KPIs:
+  - total orders (selected date range)
+  - completed
+  - needs review
+  - failed
+  - unknown supplier count
+- Search bar (global):
+  - invoice number
+  - supplier code/name
+  - sender email
+  - filename
+  - barcode/item text (see data model notes)
+- Filter panel:
+  - status (multi-select: `PROCESSING`, `COMPLETED`, `NEEDS_REVIEW`, `FAILED`)
+  - supplier
+  - date range (`created_at`)
+  - order type (`Real` / `Test`) with default view set to `Real` only
+  - only unknown supplier
+  - has warnings
+- Orders table (sortable/paginated):
+  - created at
+  - status
+  - supplier (code + name)
+  - invoice number
+  - sender
+  - line items count
+  - warnings count
+  - processing cost (ILS)
+  - actions: `Open`, `Copy Link`
+- Bulk actions (phase 2):
+  - mark selected as needs review
+  - export selected metadata to CSV
 
-#### A. Service Layer Pattern (Refactoring) ✅ [COMPLETED]
-Create a dedicated **Core Business Layer** (`src/core`) that both the Cloud Function and Streamlit App import.
-- **`OrderProcessor`**: A class that handles the lifecycle of an order (Extraction -> Validation -> Database).
-- **`IngestionService`**: Handles file inputs (Email, Upload) and normalizes them before processing.
-- **Benefit**: "Retry" logic in the Dashboard calls the exact same code as the "New Email" logic, ensuring consistency.
-
-#### B. Event-Driven Architecture (Async Processing)
-Instead of processing the invoice *immediately* when the email arrives (which can timeout):
-1.  **Ingestion Function**: Receives Gmail push -> Saves attachment to GCS -> Publishes message to Pub/Sub (`order-processing-queue`).
-2.  **Processing Function**: Subscribes to `order-processing-queue` -> Downloads file -> Calls Vertex AI -> Saves to Firestore.
-3.  **Benefit**: Reliability. If 100 emails arrive at once, the queue handles them without timeouts. Retries are managed by Pub/Sub dead-letter queues.
-
-#### C. Backend API Expansion
-Expand `src/api/main.py` to be the primary backend for the Streamlit App.
-- Instead of Streamlit accessing Firestore directly, it should (ideally) call the API.
-- This separates "Frontend" (Streamlit) from "Backend" (Data/AI logic).
-
----
-
-## 2. Reliability & Robustness
-
-### A. Structured Logging ✅ [COMPLETED]
-Replace `print()` and basic `logging` with **JSON Structured Logging**.
-- Use `python-json-logger` or Google Cloud Logging libraries.
-- **Why?** In Cloud Run/Functions, you can query logs by `order_id`, `supplier_code`, or `severity`.
-- **Status**: Implemented in `src/shared/logger.py`.
-
-### B. Comprehensive Error Handling
-Implement a centralized error handling strategy.
-- Define custom exception types: `ExtractionError`, `ValidationError`, `NetworkError`.
-- Ensure **all** failures end up in a "Failed Orders" queue/list in Firestore, visible in the Dashboard for manual intervention.
-
-### C. Type Safety & Validation (Pydantic V2)
-- Ensure all data passing between layers involves **Pydantic Models**.
-- Use Pydantic's `ComputedField` or `field_validator` for all business rules (like VAT calculation logic), removing that logic from the generic extraction code.
-
-### D. Testing Strategy 🔄 [IN PROGRESS]
-One of the biggest missing pieces is a test suite.
-1.  **Unit Tests**: Test `validate_order_totals` and `post_process_promotions` with mock data. (Implemented in `tests/`)
-2.  **Integration Tests**: Test Firestore read/writes using the Local Emulator or a test project.
-3.  **Snapshot Tests**: Save "Gold Standard" input PDFs and expected JSON outputs. Run these on every PR to ensure prompt changes don't break existing extraction accuracy.
+Recommended UX behavior:
+- Default sort: newest first.
+- Keep filters in URL query params so views are shareable.
+- Use saved views (phase 2): “Needs Review”, “Unknown Supplier”, “Today”.
 
 ---
 
-## 3. Tech Stack & Tooling
+### B. Order Workspace (Per Order Link)
+Purpose: full review/edit of one order + experimentation with custom extraction instructions.
 
-### Recommendations
-1.  **Dependency Management**: Switch to **Poetry** or **uv**. ✅ [COMPLETED]
-    - Project now uses `uv`. `requirements.txt` is generated from `uv.lock`.
-2.  **Linting & Formatting**: Add `ruff` (replacing flake8/isort/black). ✅ [COMPLETED]
-    - Enforce code style automatically via `pre-commit` hooks.
-3.  **Configuration**: Use `pydantic-settings`. ✅ [COMPLETED]
-    - Strongly typed environment variables. Validation on startup (fails fast if `GCP_PROJECT_ID` is missing).
-    - Status: Implemented in `src/shared/config.py`.
+Entry points:
+- From email link (`?session=<id>`) — already exists.
+- From Inbox row action (`Open`).
 
----
+Layout:
+- Header:
+  - order status badge
+  - supplier and invoice meta
+  - created time, sender, filename
+  - quick actions: download Excel, copy order link
+- Main tabs:
+  - `Extracted Data` (existing editor, warnings, new items)
+  - `AI Insights` (phase reasoning, math/qty reasoning, notes)
+  - `Prompt Playground` (new)
+  - `History` (new, lightweight audit trail)
 
-## 4. Feature Richness (UI/UX)
+Recommended actions:
+- `Retry with instructions` (existing behavior, improved UX)
+- `Approve order` / `Mark needs review`
+- `Save supplier instructions` (from Playground)
 
-### A. Dashboard "Inbox"
-Create a dedicated "Inbox" view in Streamlit.
-- Shows all processed orders with status: `PROCESSING`, `COMPLETED`, `NEEDS_REVIEW`, `FAILED`.
+## 3) Prompt Playground (Per Order)
+This is the most valuable advanced feature and should be isolated from production data until user confirms.
 
-### B. Advanced Search & Filtering
-- Add a sidebar filter to find orders by: **Supplier**, **Date Range**, **Status**, **Items contained**.
-- Use Firestore composite indexes to make this fast.
+### Goals
+- Let power users test instruction changes safely.
+- Show before/after impact quickly.
+- Allow one-click promotion to supplier-level permanent instructions.
 
-### C. Supplier Management 2.0
-- Add **Stats**: "Success rate per supplier".
-- **Prompt Playground**: Allow power users to tweak the "Special Instructions" and *immediately test* it against a uploaded PDF in a sandbox view (without saving to the main DB).
+### Playground UX
+- Preload text area with current supplier `special_instructions`.
+- Show two run modes:
+  - `Test on current document` (default)
+  - `Test on uploaded sample` (phase 2)
+- Run output panel:
+  - parsed order preview table
+  - diff vs baseline extraction (line count changed, quantity/price changes, warnings delta)
+  - runtime + estimated AI cost
+- Save controls:
+  - `Use only for this order` (ephemeral)
+  - `Save to supplier` (persistent DB write)
+  - optional note: “why changed”
 
+### Save-to-DB safety checks
+Before writing to supplier DB:
+- require explicit confirmation modal
+- show supplier code being updated
+- show old vs new instruction preview
+- log who changed it + timestamp + optional note
 
+### Data to persist for traceability
+- `supplier_instruction_versions` collection (recommended):
+  - `supplier_code`
+  - `instructions`
+  - `changed_by`
+  - `changed_at`
+  - `source_order_id` / `source_session_id`
+  - `change_note`
 
----
+## 4) Data Model and Backend Adjustments
 
-## 5. Proposed Roadmap
+### Current reality
+- `sessions` collection stores share-link payload (order + metadata) with expiry.
+- `orders` collection exists but currently has limited dashboard fields.
+- `processing_events` tracks pipeline statuses.
 
-### Phase 1: Refactoring (Robustness) - [COMPLETED]
-1.  Set up **Poetry** and **Ruff**. (Done - using `uv`)
-2.  Create `src/core` and move logic from `email_processor` and `vertex_client` into reusable classes. (Done)
-3.  Implement **Pydantic Settings** and **Structured Logging**. (Done)
+### Recommended dashboard read model
+Either enrich `orders` docs directly or create `order_views` docs (denormalized for UI queries).
 
-### Phase 2: Reliability (Testing & Async) - [IN PROGRESS]
-1.  Add **Unit Tests** for core logic. (In Progress)
-2.  Implement **Pub/Sub** pattern for email ingestion.
+Suggested fields (minimal for Inbox):
+- `order_id` (doc id)
+- `session_id` (for deep link)
+- `event_id`
+- `created_at`, `updated_at`
+- `status`
+- `supplier_code`, `supplier_name`
+- `invoice_number`
+- `sender`, `subject`, `filename`
+- `line_items_count`
+- `warnings_count`
+- `has_warnings`
+- `is_unknown_supplier`
+- `processing_cost_ils`
+- `is_test`
+- `search_tokens` (optional)
 
+### Firestore index plan
+- `(status, created_at desc)`
+- `(supplier_code, created_at desc)`
+- `(is_unknown_supplier, created_at desc)`
+- `(has_warnings, created_at desc)`
+- `(created_at desc)`
 
-### Phase 3: Features (UI)
-1.  Build the **"Inbox"** view.
-2.  Add **Analytics** and **Search** filters.
+If “items contained” filter is mandatory:
+- Add `item_barcodes` array (normalized), then use `array_contains`.
+- Note: for free-text item description search at scale, use a dedicated search engine later.
 
+## 5) Streamlit Architecture Plan
+Refactor current `src/dashboard/app.py` into page modules to keep complexity manageable.
 
+Proposed structure:
+- `src/dashboard/pages/inbox.py`
+- `src/dashboard/pages/order_workspace.py`
+- `src/dashboard/components/order_table.py`
+- `src/dashboard/components/prompt_playground.py`
+- `src/dashboard/services/order_repository.py`
+
+Routing:
+- Keep sidebar navigation.
+- Support query params:
+  - `?page=inbox`
+  - `?page=order&session=<id>`
+  - optional `?order_id=<id>`
+
+## 6) Status Model (Unified)
+Standardize one status enum for UI and backend:
+- `PROCESSING`
+- `COMPLETED`
+- `NEEDS_REVIEW`
+- `FAILED`
+- `ARCHIVED` (optional later)
+
+Rules:
+- extraction errors => `FAILED`
+- warnings/unknown supplier can auto-set `NEEDS_REVIEW`
+- manual approval can move to `COMPLETED`
+
+## 7) Rollout Phases
+
+### Phase 1 (MVP - high impact)
+- Inbox page with table + search + status/supplier/date filters
+- Open order from table
+- Keep existing order editor behavior
+
+### Phase 2
+- Prompt Playground tab in order workspace
+- Test run with custom instructions
+- Save instructions permanently to supplier DB with confirmation
+- Basic audit log for instruction updates
+
+### Phase 3
+- Diff view quality metrics (before/after)
+- Saved filter presets in Inbox
+- Bulk actions and CSV export
+
+### Phase 4
+- Analytics dashboard (supplier success rate, retry rate, failure reasons)
+- Performance optimization + pagination tuning
+
+## 8) Design Recommendations
+- Keep current simple visual style, but enforce stronger hierarchy:
+  - sticky filter bar in Inbox
+  - clear status color coding
+  - persistent action bar in Order Workspace
+- Prefer fewer widgets per row and obvious action grouping:
+  - “Test prompt” separate from “Save permanently” to prevent accidental writes
+- Add empty/loading/error states for each window.
+
+## 9) Acceptance Criteria (First Milestone)
+- User can view all orders in one Inbox table.
+- User can filter by status, supplier, date range.
+- User can search and open any order into Order Workspace.
+- Email deep link still opens the correct order.
+- Prompt Playground allows test run with custom instructions.
+- User can save instructions to supplier DB with confirmation.
+- All critical actions are logged with user + timestamp.
+
+## 10) Risks and Mitigations
+- Risk: Firestore query performance degrades with large order volume.
+  - Mitigation: denormalized read model + strict indexes + pagination.
+- Risk: accidental overwrite of supplier instructions.
+  - Mitigation: confirmation modal + version history + rollback option.
+- Risk: confusion between temporary and permanent instructions.
+  - Mitigation: explicit dual-action buttons and warning copy.

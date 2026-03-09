@@ -9,6 +9,7 @@ from src.extraction.prompts import get_supplier_detection_prompt
 from src.extraction.schemas import supplier_detection_schema
 from src.shared.ai_cost import calculate_cost
 from src.shared.config import settings
+from src.shared.constants import SUPPLIER_DETECTION_MODEL
 from src.shared.logger import get_logger
 from src.shared.utils import get_mime_type, is_excel_file
 
@@ -131,7 +132,7 @@ def detect_supplier(
     prompt = get_supplier_detection_prompt(filtered_email, invoice_context, suppliers_csv)
     content_parts.append(types.Part.from_text(text=prompt))
 
-    model_name = "gemini-2.5-flash"
+    model_name = SUPPLIER_DETECTION_MODEL
     logger.info(f"{trace_context}>>> Phase 1: Starting Supplier Detection using {model_name}...")
     logger.debug(
         f"{trace_context}Phase 1 Context: Email Snippet={filtered_email[:100]}..., "

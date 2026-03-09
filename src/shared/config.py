@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     GMAIL_TOKEN: SecretStr | None = Field(validation_alias="GMAIL_TOKEN", default=None)
     # Comma-separated string of emails to ignore in context
     EXCLUDED_EMAILS_STR: str = Field(validation_alias="EXCLUDED_EMAILS", default="")
+    # Comma-separated sender emails that should be flagged as test orders
+    TEST_ORDER_EMAILS_STR: str = Field(
+        validation_alias="TEST_ORDER_EMAILS",
+        default="aarondavidtawil@gmail.com",
+    )
 
     # IDs to ignore (User's company IDs)
     BLACKLIST_IDS_STR: str = Field(validation_alias="BLACKLIST_IDS", default="515020394,029912221")
@@ -90,6 +95,13 @@ class Settings(BaseSettings):
     def blacklist_emails(self) -> set[str]:
         """Set of blacklisted emails (Same as excluded_emails, but as a Set)."""
         return set(self.excluded_emails)
+
+    @property
+    def test_order_emails(self) -> set[str]:
+        """Set of sender emails that should be marked as test orders."""
+        if not self.TEST_ORDER_EMAILS_STR:
+            return set()
+        return {e.strip().lower() for e in self.TEST_ORDER_EMAILS_STR.split(",") if e.strip()}
 
     @property
     def blacklist_names(self) -> list[str]:

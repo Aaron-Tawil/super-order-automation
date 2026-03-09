@@ -1,10 +1,14 @@
 # Python bytecode / cache
 __pycache__/
-*.py[cod]
+*.pyc
+*.pyo
+*.pyd
 
 # Virtual environments (Windows + WSL)
 .venv/
-.venv*/
+.venv
+.venv-linux/
+.venv-win/
 venv/
 
 # Local env files and secrets

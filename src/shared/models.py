@@ -1,6 +1,6 @@
 import re
 from enum import StrEnum
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
@@ -101,11 +101,13 @@ class ExtractedOrder(BaseModel):
 
     # Metadata from API
     ai_metadata: dict | None = Field(default_factory=dict, description="Metadata from Vertex AI extraction")
+    ui_metadata: dict[str, Any] = Field(default_factory=dict)
 
     # Usage / Cost Metadata
     processing_cost: float = Field(0.0, description="Estimated cost of AI processing for this order (USD)")
     processing_cost_ils: float = Field(0.0, description="Estimated cost of AI processing for this order (ILS)")
     usage_metadata: dict | None = Field(None, description="Raw token usage metadata from AI model")
+    is_test: bool = Field(False, description="Whether this order is a test/sandbox order")
 
     line_items: list[LineItem] = Field(..., validation_alias=AliasChoices("line_items", "items"))
 
