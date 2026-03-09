@@ -3,7 +3,7 @@ from src.shared.utils import extract_sender_email, is_test_sender
 
 
 def test_extract_sender_email_from_display_name() -> None:
-    assert extract_sender_email("Aaron <aarondavidtawil@gmail.com>") == "aarondavidtawil@gmail.com"
+    assert extract_sender_email("Test <test@example.com>") == "test@example.com"
 
 
 def test_is_test_sender_uses_configured_test_emails(monkeypatch) -> None:

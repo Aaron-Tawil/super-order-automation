@@ -6,6 +6,7 @@ import pytest
 
 from src.cloud_functions.processor_fn import process_order_event
 from src.core.pipeline import PipelineResult
+from src.shared.config import settings
 from src.shared.models import ExtractedOrder, LineItem
 
 
@@ -30,13 +31,6 @@ def mock_save_firestore():
 @pytest.fixture
 def mock_init_client():
     with patch("src.cloud_functions.processor_fn.init_client") as mock:
-        yield mock
-
-
-@pytest.fixture
-def mock_create_session():
-    with patch("src.cloud_functions.processor_fn.create_session") as mock:
-        mock.return_value = "session-test-123"
         yield mock
 
 
@@ -68,7 +62,6 @@ def test_process_order_event_success(
     mock_download,
     mock_save_firestore,
     mock_init_client,
-    mock_create_session,
     mock_processing_status,
     mock_idempotency_service,
 ):
@@ -130,7 +123,6 @@ def test_process_order_event_success(
     save_args = mock_save_firestore.call_args
     assert save_args.args == (mock_order, "gs://bucket/invoice.pdf")
     assert save_args.kwargs["is_test"] is False
-    assert save_args.kwargs["session_id"] == "session-test-123"
     assert save_args.kwargs["metadata"]["sender"] == "sender@example.com"
     assert save_args.kwargs["metadata"]["subject"] == "Invoice 123"
     assert save_args.kwargs["metadata"]["filename"] == "invoice.pdf"
@@ -145,7 +137,6 @@ def test_process_order_event_success_xlsx(
     mock_download,
     mock_save_firestore,
     mock_init_client,
-    mock_create_session,
     mock_processing_status,
     mock_idempotency_service,
 ):
@@ -206,7 +197,6 @@ def test_process_order_event_success_xlsx(
     save_args = mock_save_firestore.call_args
     assert save_args.args == (mock_order, "gs://bucket/invoice.xlsx")
     assert save_args.kwargs["is_test"] is False
-    assert save_args.kwargs["session_id"] == "session-test-123"
     assert save_args.kwargs["metadata"]["sender"] == "sender@example.com"
     assert save_args.kwargs["metadata"]["subject"] == "Invoice 123"
     assert save_args.kwargs["metadata"]["filename"] == "invoice.xlsx"
@@ -221,10 +211,11 @@ def test_process_order_event_marks_test_sender_orders(
     mock_download,
     mock_save_firestore,
     mock_init_client,
-    mock_create_session,
     mock_processing_status,
     mock_idempotency_service,
+    monkeypatch,
 ):
+    monkeypatch.setattr(settings, "TEST_ORDER_EMAILS_STR", "test@example.com")
     event_payload = {
         "gcs_uri": "gs://bucket/invoice.pdf",
         "bucket_name": "bucket",
@@ -234,7 +225,7 @@ def test_process_order_event_marks_test_sender_orders(
         "email_metadata": {
             "message_id": "msg1",
             "thread_id": "thread1",
-            "sender": "Aaron Test <aarondavidtawil@gmail.com>",
+            "sender": "Test User <test@example.com>",
             "subject": "Invoice Test",
             "received_at": "2023-01-01T12:00:00",
         },
@@ -270,8 +261,7 @@ def test_process_order_event_marks_test_sender_orders(
     save_args = mock_save_firestore.call_args
     assert save_args.args == (mock_order, "gs://bucket/invoice.pdf")
     assert save_args.kwargs["is_test"] is True
-    assert save_args.kwargs["session_id"] == "session-test-123"
-    assert save_args.kwargs["metadata"]["sender"] == "Aaron Test <aarondavidtawil@gmail.com>"
+    assert save_args.kwargs["metadata"]["sender"] == "Test User <test@example.com>"
     assert mock_order.is_test is True
     mock_reply.assert_called()
 

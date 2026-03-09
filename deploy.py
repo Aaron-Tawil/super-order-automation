@@ -30,7 +30,7 @@ from pathlib import Path
 import yaml
 
 # Configuration
-PROJECT_ID = os.getenv("GCP_PROJECT_ID", "super-home-automation")  # Default for dev, override in CI/CD
+PROJECT_ID = os.getenv("GCP_PROJECT_ID", "your-project-id")  # Default placeholder
 REGION = os.getenv("GCP_REGION", "us-central1")
 FUNCTION_NAME = "order-bot"
 PROCESSING_FUNCTION_NAME = "process-order-event"
@@ -401,7 +401,7 @@ def print_summary():
         f"  {Colors.GRAY}gcloud functions logs read {FUNCTION_NAME} --project={PROJECT_ID} --region={REGION} --limit=20{Colors.RESET}"
     )
 
-    print(f"\n{Colors.GREEN}SUCCESS! Send an email to orders.superhome.bot@gmail.com to test!{Colors.RESET}\n")
+    print(f"\n{Colors.GREEN}SUCCESS! System deployed. Send an email to your bot to test!{Colors.RESET}\n")
 
 
 def check_pubsub_topics():

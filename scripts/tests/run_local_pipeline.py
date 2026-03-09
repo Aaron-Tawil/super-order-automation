@@ -1,4 +1,4 @@
-
+import argparse
 import json
 import os
 import shutil
@@ -17,11 +17,11 @@ from src.export.new_items_generator import filter_new_items_from_order, generate
 from src.extraction.vertex_client import detect_supplier, init_client
 from src.shared.ai_cost import calculate_cost_ils, get_usd_to_ils_rate
 from src.shared.logger import get_logger
-from src.shared.utils import get_mime_type
+from src.shared.utils import get_mime_type, is_test_sender
 
 logger = get_logger(__name__)
 
-def run_pipeline(file_path):
+def run_pipeline(file_path: str, sender: str = "test@example.com"):
     if not os.path.exists(file_path):
         logger.error(f"File not found: {file_path}")
         return
@@ -54,11 +54,15 @@ def run_pipeline(file_path):
     
     # Mock Email Metadata for local test
     mock_email_meta = {
-        "sender": "aarondavidtawil@gmail.com",
+        "sender": sender,
         "subject": f"Invoice for {os.path.basename(file_path)}",
         "body": "Please find attached.",
         "run_id": run_id,
     }
+    
+    # Always flag local test runs as 'TEST', regardless of the sender
+    is_test_order = True
+    logger.info(f"{ctx}📧 Mock Sender: {sender} (is_test={is_test_order} enforced)")
     
     mime_type = get_mime_type(file_path)
     logger.info(f"{ctx}Using MIME type: {mime_type}")
@@ -87,6 +91,8 @@ def run_pipeline(file_path):
 
     if result.orders:
         for i, order in enumerate(result.orders):
+            order.is_test = is_test_order
+            
             logger.info(f"{ctx}--- Order {i+1} ---")
             logger.info(f"{ctx}Invoice: {order.invoice_number}")
             logger.info(f"{ctx}Supplier ID: {order.supplier_code}")
@@ -126,7 +132,9 @@ def run_pipeline(file_path):
         logger.warning(f"{ctx}No orders extracted.")
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: uv run scripts/tests/run_local_pipeline.py <path_to_invoice>")
-    else:
-        run_pipeline(sys.argv[1])
+    parser = argparse.ArgumentParser(description="Run local extraction pipeline.")
+    parser.add_argument("file", help="Path to local invoice file")
+    parser.add_argument("--sender", default="test@example.com", help="Mock sender email address (default: test@example.com)")
+    args = parser.parse_args()
+
+    run_pipeline(args.file, args.sender)

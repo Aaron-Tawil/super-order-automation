@@ -13,21 +13,13 @@ EXTRACTION_MODEL_TRIAL_2 = "gemini-2.5-pro"     # Stronger model for retry
 SUPPLIER_DETECTION_MODEL = "gemini-2.5-flash"   # Phase 1 supplier detection
 
 # --- Blacklists & Filters ---
+# These are empty defaults; user-specific settings should be provided in environment variables (.env)
 
 # Emails and domains to ignore during supplier detection (e.g. company's own emails)
-EXCLUDED_EMAILS = [
-    "@superhome.co.il",
-    "store4@superhome.co.il",
-    "moishiop@gmail.com",
-    "aarondavidtawil@gmail.com",
-    "orders.superhome.bot@gmail.com",
-]
+EXCLUDED_EMAILS = []
 
 # Business IDs to ignore (e.g. company's own H.P. numbers)
-BLACKLIST_IDS = [
-    "515020394",
-    "029912221",
-]
+BLACKLIST_IDS = []
 
 # Company names to ignore during supplier detection (our own company)
-BLACKLIST_NAMES = ["סופר הום", "שטובה אינטרנשיונל","שטובה"]
+BLACKLIST_NAMES = []

@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # PROJECT_ID is critical. Support multiple common env var names.
     PROJECT_ID: str = Field(
         validation_alias=AliasChoices("GOOGLE_CLOUD_PROJECT", "GCP_PROJECT_ID"),
-        default="super-home-automation",
+        default="your-project-id",
         description="Google Cloud Project ID",
     )
     REGION: str = Field(validation_alias="GCP_REGION", default="us-central1")
@@ -40,13 +40,13 @@ class Settings(BaseSettings):
     # Comma-separated sender emails that should be flagged as test orders
     TEST_ORDER_EMAILS_STR: str = Field(
         validation_alias="TEST_ORDER_EMAILS",
-        default="aarondavidtawil@gmail.com",
+        default="",
     )
 
     # IDs to ignore (User's company IDs)
-    BLACKLIST_IDS_STR: str = Field(validation_alias="BLACKLIST_IDS", default="515020394,029912221")
+    BLACKLIST_IDS_STR: str = Field(validation_alias="BLACKLIST_IDS", default="")
     # Names to ignore (User's company names)
-    BLACKLIST_NAMES_STR: str = Field(validation_alias="BLACKLIST_NAMES", default="סופר הום,שטובה אינטרנשיונל")
+    BLACKLIST_NAMES_STR: str = Field(validation_alias="BLACKLIST_NAMES", default="")
 
     # --- Web UI ---
     WEB_UI_URL: str = Field(validation_alias="WEB_UI_URL", default="http://localhost:8501")

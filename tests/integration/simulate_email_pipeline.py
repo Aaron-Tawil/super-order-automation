@@ -70,10 +70,23 @@ def run_simulation(file_path):
 
     # 2. Construct Event
     logger.info("Step 2: Constructing OrderIngestedEvent...")
+
+    # FORCE TEST SENDER
+    # We explicitly inject a known test address and update the process environment 
+    # to ensure is_test_sender() always evaluates to True during this simulation.
+    test_sender = "simulation-test-run@superhome.local"
+    
+    # Safely append our test sender to any existing ones in the current process
+    existing_tests = os.environ.get("TEST_ORDER_EMAILS", "")
+    os.environ["TEST_ORDER_EMAILS"] = f"{test_sender},{existing_tests}"
+    
+    # Inform the settings object to reload/recognize this new env var during the run
+    settings.TEST_ORDER_EMAILS_STR = os.environ["TEST_ORDER_EMAILS"]
+
     email_meta = EmailMetadata(
         message_id="sim_msg_001",
         thread_id="sim_thread_001",
-        sender="aarondavidtawil@gmail.com",
+        sender=test_sender,
         subject=f"Simulation Invoice {filename}",
         received_at=datetime.utcnow(),
         body_snippet="This is a simulated email body for testing purposes.",
@@ -97,12 +110,10 @@ def run_simulation(file_path):
     cloud_event = create_mock_cloud_event(event)
 
     # 3. Trigger Processing Function
-    logger.info("Step 3: Triggering process_order_event (Cloud Function)...")
+    logger.info("Step 3: Triggering process_order_event (Forced as TEST)...")
     try:
-        # This calls the actual function which will:
-        # - Download file from GCS
-        # - Call OrderProcessor (Vertex AI)
-        # - Save to Firestore
+        # Note: Whether this is a TEST order depends on whether the sender is in 
+        # settings.TEST_ORDER_EMAILS defined in your .env
         process_order_event(cloud_event)
         logger.info("--- Simulation Completed Successfully ---")
         logger.info("Check Firestore and Logs for details.")
