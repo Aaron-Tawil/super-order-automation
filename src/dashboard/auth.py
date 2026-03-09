@@ -151,6 +151,17 @@ def _get_cookie_manager() -> CookieManager:
     return _cookie_manager
 
 
+def _get_all_params_except_oauth() -> dict[str, str]:
+    """Extracts all current query parameters except OAuth-specific ones."""
+    params = {}
+    for key, value in st.query_params.items():
+        if key not in ("code", "state", "session_state", "authuser", "prompt", "scope"):
+            norm = _normalize_query_value(value)
+            if norm:
+                params[key] = norm
+    return params
+
+
 def _refresh_cookie_manager_if_needed() -> CookieManager:
     """
     Refreshes stale not-ready manager instances across reruns while preserving
@@ -344,7 +355,7 @@ def _encode_oauth_state(payload: dict[str, str | int]) -> str:
     return _encode_payload(payload)
 
 
-def _decode_oauth_state(state: str | None) -> dict[str, str | int] | None:
+def _decode_oauth_state(state: str | None) -> dict[str, str | int | dict] | None:
     """Decodes OAuth state payload from URL-safe base64 JSON."""
     payload = _decode_payload(state)
     if not payload:
@@ -366,16 +377,22 @@ def _decode_oauth_state(state: str | None) -> dict[str, str | int] | None:
     if not isinstance(signature, str) or not signature.strip():
         return None
 
-    normalized: dict[str, str | int] = {
+    normalized: dict[str, str | int | dict] = {
         "nonce": nonce.strip(),
         "provider": _normalize_provider(provider),
         "iat": issued_at,
         "sig": signature.strip(),
     }
 
+    # Legacy session support
     session_value = payload.get("session")
     if isinstance(session_value, str) and session_value.strip():
         normalized["session"] = session_value.strip()
+
+    # Generic redirect params
+    redir = payload.get("redir")
+    if isinstance(redir, dict):
+        normalized["redir"] = redir
 
     return normalized
 
@@ -385,14 +402,17 @@ def _build_oauth_state_payload(
     provider: str,
     issued_at: int,
     session_id: str | None = None,
-) -> dict[str, str | int]:
-    payload: dict[str, str | int] = {
+    redirect_params: dict[str, str] | None = None,
+) -> dict[str, str | int | dict]:
+    payload: dict[str, str | int | dict] = {
         "nonce": nonce,
         "provider": _normalize_provider(provider),
         "iat": issued_at,
     }
     if session_id:
         payload["session"] = session_id
+    if redirect_params:
+        payload["redir"] = redirect_params
     return payload
 
 
@@ -446,7 +466,11 @@ def _is_valid_oauth_state(payload: dict[str, str | int] | None) -> bool:
     return True
 
 
-def get_login_url(session_id: str | None = None, provider: str = DEFAULT_AUTH_PROVIDER) -> str:
+def get_login_url(
+    session_id: str | None = None,
+    provider: str = DEFAULT_AUTH_PROVIDER,
+    redirect_params: dict[str, str] | None = None,
+) -> str:
     """Constructs provider-specific OAuth login URL."""
     provider_cfg = _get_provider_config(provider)
     nonce = secrets.token_urlsafe(24)
@@ -456,6 +480,7 @@ def get_login_url(session_id: str | None = None, provider: str = DEFAULT_AUTH_PR
         provider=provider_cfg["provider"],
         issued_at=issued_at,
         session_id=session_id,
+        redirect_params=redirect_params,
     )
     state_payload["sig"] = _sign_oauth_state(state_payload)
 
@@ -716,13 +741,18 @@ def require_login():
                             )
                             logger.info(f"Auth cookie save requested={cookie_saved}")
 
-                            # Preserve deep-link context after OAuth callback.
+                            # Restore deep-link context after OAuth callback.
+                            st.query_params.clear()
+                            
+                            redirect_params = state_payload.get("redir")
+                            if isinstance(redirect_params, dict):
+                                for k, v in redirect_params.items():
+                                    st.query_params[k] = v
+                                    if k == "order_id":
+                                        st.session_state["active_order_id"] = v
+
                             if callback_session_id:
                                 st.session_state[POST_AUTH_SESSION_KEY] = callback_session_id
-
-                            # Clear OAuth callback parameters for a clean URL.
-                            st.query_params.clear()
-                            if callback_session_id:
                                 st.query_params["session"] = callback_session_id
 
                             # Let this run finish so cookie-component save can flush to browser.
@@ -752,12 +782,12 @@ def require_login():
         st.stop()
 
     # 3. Not logged in, not a callback -> Show login screen
-    pending_session_id = _normalize_query_value(st.query_params.get("session"))
-    display_login_screen(pending_session_id)
+    params = _get_all_params_except_oauth()
+    display_login_screen(redirect_params=params)
     st.stop() # Stop rendering the rest of the application
 
 
-def display_login_screen(session_id: str | None = None):
+def display_login_screen(session_id: str | None = None, redirect_params: dict[str, str] | None = None):
     """Renders the login UI."""
     # Load global CSS so RTL is applied even when stopped at login
     import os
@@ -834,8 +864,13 @@ def display_login_screen(session_id: str | None = None):
     for provider in enabled_providers:
         button_class = "oauth-google" if provider == GOOGLE_PROVIDER else "oauth-microsoft"
         label = get_text("auth_btn_login_google") if provider == GOOGLE_PROVIDER else get_text("auth_btn_login_microsoft")
+        login_url = get_login_url(
+            session_id=session_id, 
+            provider=provider, 
+            redirect_params=redirect_params
+        )
         provider_buttons.append(
-            f'<a href="{get_login_url(session_id, provider)}" class="oauth-btn {button_class}" target="_self">{label}</a>'
+            f'<a href="{login_url}" class="oauth-btn {button_class}" target="_self">{label}</a>'
         )
 
     provider_buttons_html = "\n".join(provider_buttons)

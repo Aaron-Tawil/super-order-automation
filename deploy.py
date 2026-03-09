@@ -262,7 +262,7 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
     # Create temporary env vars file
     env_file_path = os.path.abspath("deploy_env.yaml")
     try:
-        with open(env_file_path, "w") as f:
+        with open(env_file_path, "w", encoding="utf-8") as f:
             yaml.dump(env_vars, f)
         
         print_info(f"Generated {env_file_path} for deployment")
@@ -289,7 +289,7 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
 
             # Ensure file exists
             if not os.path.exists(env_file_path):
-                with open(env_file_path, "w") as f:
+                with open(env_file_path, "w", encoding="utf-8") as f:
                     yaml.dump(env_vars, f)
 
             result_main = subprocess.run(cmd_main, shell=True)
@@ -322,7 +322,7 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
 
             # Ensure file exists
             if not os.path.exists(env_file_path):
-                with open(env_file_path, "w") as f:
+                with open(env_file_path, "w", encoding="utf-8") as f:
                     yaml.dump(env_vars, f)
 
             result_process = subprocess.run(cmd_process, shell=True)
@@ -355,7 +355,7 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
 
             # Ensure file exists
             if not os.path.exists(env_file_path):
-                with open(env_file_path, "w") as f:
+                with open(env_file_path, "w", encoding="utf-8") as f:
                     yaml.dump(env_vars, f)
 
             result_renew = subprocess.run(cmd_renew, shell=True)

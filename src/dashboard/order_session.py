@@ -100,7 +100,7 @@ def render_order_session() -> None:  # noqa: C901
     display_status = str(raw_status).upper()
 
     cost_ils = data.get("processing_cost_ils", 0.0) or 0.0
-    invoice_number = data.get("invoice_number", "-") or "-"
+    invoice_number = str(data.get("invoice_number", "-") or "-").strip() or "-"
     created_at = data.get("created_at") or metadata.get("created_at")
     if hasattr(created_at, "strftime"):
         created_at_str = created_at.strftime("%Y-%m-%d %H:%M")

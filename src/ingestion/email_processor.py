@@ -25,7 +25,6 @@ from src.ingestion.gcs_writer import upload_to_gcs
 from src.ingestion.ingestor import IngestionService
 from src.shared.config import settings
 from src.shared.logger import get_logger
-from src.shared.session_store import create_session
 from src.shared.translations import get_text
 
 logger = get_logger(__name__)
