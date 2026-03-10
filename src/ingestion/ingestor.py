@@ -11,6 +11,7 @@ from src.ingestion.gmail_utils import get_email_body, get_gmail_service
 from src.shared.config import settings
 from src.shared.idempotency_service import IdempotencyService
 from src.shared.logger import get_logger
+from src.shared.utils import is_allowed_sender
 
 logger = get_logger(__name__)
 
@@ -97,6 +98,10 @@ class IngestionService:
 
                     # Extract Sender
                     sender = next((h["value"] for h in headers if h["name"] == "From"), "Unknown")
+
+                    if not is_allowed_sender(sender):
+                        logger.info(f"{msg_ctx}Skipping sender not in ALLOWED_EMAILS: {sender}")
+                        continue
 
                     # Ignore self
                     profile = service.users().getProfile(userId="me").execute()

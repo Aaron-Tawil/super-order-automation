@@ -89,3 +89,23 @@ def is_test_sender(sender: str | None) -> bool:
     """
     sender_email = extract_sender_email(sender)
     return bool(sender_email and sender_email in settings.test_order_emails)
+
+
+def is_allowed_sender(sender: str | None) -> bool:
+    """
+    Returns True when sender matches configured allowed emails.
+    Supports exact email entries and domain entries like "@example.com".
+    Empty allowlists permit all senders.
+    """
+    allowed_emails = settings.allowed_emails
+    if not allowed_emails:
+        return True
+
+    sender_email = extract_sender_email(sender)
+    if not sender_email:
+        return False
+
+    return any(
+        sender_email == allowed_entry or (allowed_entry.startswith("@") and sender_email.endswith(allowed_entry))
+        for allowed_entry in allowed_emails
+    )
