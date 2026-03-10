@@ -24,14 +24,15 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 import yaml
 
 # Configuration
-PROJECT_ID = os.getenv("GCP_PROJECT_ID", "your-project-id")  # Default placeholder
-REGION = os.getenv("GCP_REGION", "us-central1")
+PROJECT_ID = None
+REGION = None
 FUNCTION_NAME = "order-bot"
 PROCESSING_FUNCTION_NAME = "process-order-event"
 PUBSUB_TOPIC = "gmail-incoming-orders"
@@ -95,6 +96,46 @@ def run_command(cmd, capture=False, check=True):
         return None
 
 
+def load_env_vars():
+    """Load environment variables from .env file."""
+    env_vars = {}
+    env_file = Path(".env")
+
+    if env_file.exists():
+        with open(env_file, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    env_vars[key.strip()] = value.strip()
+
+    return env_vars
+
+
+def initialize_deploy_config():
+    """Resolve deployment config from env, .env, and gcloud defaults."""
+    global PROJECT_ID, REGION
+
+    env_vars = load_env_vars()
+    gcloud_project = run_command("gcloud config get-value project", capture=True, check=False)
+    gcloud_project = gcloud_project.strip() if gcloud_project else ""
+
+    project_id = os.getenv("GCP_PROJECT_ID") or env_vars.get("GCP_PROJECT_ID") or gcloud_project
+    if not project_id or project_id == "(unset)":
+        print_error("Could not determine GCP project. Set GCP_PROJECT_ID in the environment or .env.")
+        sys.exit(1)
+
+    region = (
+        os.getenv("GCP_REGION")
+        or env_vars.get("GCP_REGION")
+        or env_vars.get("GCP_LOCATION")
+        or "us-central1"
+    )
+
+    PROJECT_ID = project_id
+    REGION = region
+
+
 def check_prerequisites():
     """Verify gcloud CLI is installed and project is set."""
     print_step(1, 5, "Checking prerequisites")
@@ -116,7 +157,9 @@ def check_prerequisites():
     # Get current project
     result = subprocess.run("gcloud config get-value project", shell=True, capture_output=True, text=True)
     current_project = result.stdout.strip()
-    print_info(f"Current project: {current_project}")
+    print_info(f"Current gcloud project: {current_project}")
+    print_info(f"Deployment project: {PROJECT_ID}")
+    print_info(f"Deployment region: {REGION}")
     print_success("Prerequisites OK")
 
 
@@ -126,12 +169,17 @@ def update_secret_manager():
 
     # Check if secret exists
     result = subprocess.run(
-        f"gcloud secrets describe {SECRET_NAME} --project={PROJECT_ID}", shell=True, capture_output=True, text=True
+        f"gcloud secrets describe {SECRET_NAME} --project={PROJECT_ID} --quiet",
+        shell=True,
+        capture_output=True,
+        text=True,
     )
 
     if result.returncode != 0:
         print_info(f"Creating new secret: {SECRET_NAME}")
-        run_command(f"gcloud secrets create {SECRET_NAME} --project={PROJECT_ID} --replication-policy=automatic")
+        run_command(
+            f"gcloud secrets create {SECRET_NAME} --project={PROJECT_ID} --replication-policy=automatic --quiet"
+        )
 
     # Read and base64 encode token
     print_info("Base64 encoding token...")
@@ -141,20 +189,34 @@ def update_secret_manager():
 
     # Add new version
     print_info("Adding new secret version...")
-    process = subprocess.Popen(
-        f"gcloud secrets versions add {SECRET_NAME} --project={PROJECT_ID} --data-file=-",
-        shell=True,
-        stdin=subprocess.PIPE,
-        text=True,
-    )
-    process.communicate(input=token_base64)
+    temp_secret_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8", suffix=".txt") as temp_file:
+            temp_file.write(token_base64)
+            temp_secret_path = temp_file.name
 
-    if process.returncode == 0:
-        print_success("Token updated in Secret Manager")
-        cleanup_old_secret_versions(SECRET_VERSIONS_TO_KEEP)
-    else:
-        print_error("Failed to update secret")
-        sys.exit(1)
+        result = subprocess.run(
+            (
+                f'gcloud secrets versions add {SECRET_NAME} '
+                f'--project={PROJECT_ID} '
+                f'--data-file="{temp_secret_path}" '
+                f"--quiet"
+            ),
+            shell=True,
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode == 0:
+            print_success("Token updated in Secret Manager")
+            cleanup_old_secret_versions(SECRET_VERSIONS_TO_KEEP)
+        else:
+            error_details = (result.stderr or result.stdout or "").strip()
+            print_error(f"Failed to update secret: {error_details}")
+            sys.exit(1)
+    finally:
+        if temp_secret_path and os.path.exists(temp_secret_path):
+            os.remove(temp_secret_path)
 
 
 def cleanup_old_secret_versions(keep_count: int = 2):
@@ -172,6 +234,7 @@ def cleanup_old_secret_versions(keep_count: int = 2):
             f"gcloud secrets versions list {SECRET_NAME} "
             f"--project={PROJECT_ID} "
             f"--sort-by=~createTime "
+            f"--quiet "
             f'--format="value(name)"'
         ),
         shell=True,
@@ -229,24 +292,6 @@ def renew_gmail_watch():
     except Exception as e:
         print_warning(f"Gmail Watch renewal failed: {e}")
         print_info("This is non-critical, the existing watch may still be valid")
-
-
-def load_env_vars():
-    """Load environment variables from .env file."""
-    env_vars = {}
-    env_file = Path(".env")
-
-    if env_file.exists():
-        with open(env_file, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    env_vars[key.strip()] = value.strip()
-
-    return env_vars
-
-
 def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_renew_watch: bool = False):
     """Deploy Cloud Functions."""
     print_step(4, 5, "Deploying Cloud Functions")
@@ -284,7 +329,8 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
                 f"--memory=512Mi "
                 f"--timeout=60s "
                 f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest "
-                f"--env-vars-file=\"{env_file_path}\""
+                f"--env-vars-file=\"{env_file_path}\" "
+                f"--quiet"
             )
 
             # Ensure file exists
@@ -317,7 +363,8 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
                 f"--memory=1Gi "
                 f"--timeout=300s "
                 f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest "
-                f"--env-vars-file=\"{env_file_path}\""
+                f"--env-vars-file=\"{env_file_path}\" "
+                f"--quiet"
             )
 
             # Ensure file exists
@@ -350,7 +397,8 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
                 f"--memory=512Mi "
                 f"--timeout=60s "
                 f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest "
-                f"--env-vars-file=\"{env_file_path}\""
+                f"--env-vars-file=\"{env_file_path}\" "
+                f"--quiet"
             )
 
             # Ensure file exists
@@ -415,7 +463,7 @@ def check_pubsub_topics():
     for topic in topics:
         if topic not in existing_topics:
             print_info(f"Creating missing topic: {topic}")
-            run_command(f"gcloud pubsub topics create {topic} --project={PROJECT_ID}")
+            run_command(f"gcloud pubsub topics create {topic} --project={PROJECT_ID} --quiet")
             print_success(f"Topic '{topic}' created")
         else:
             print_info(f"Topic '{topic}' already exists")
@@ -431,6 +479,7 @@ def main():
 
     print_header("Super Order Automation - Deployment")
 
+    initialize_deploy_config()
     check_prerequisites()
 
     if not args.skip_secret:
