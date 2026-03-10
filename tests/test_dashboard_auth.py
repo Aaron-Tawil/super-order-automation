@@ -8,7 +8,10 @@ def test_get_login_url_sets_signed_oauth_state_and_session(monkeypatch):
     fake_st = SimpleNamespace(session_state={})
     monkeypatch.setattr(auth, "st", fake_st)
 
-    login_url = auth.get_login_url(session_id="session-123")
+    login_url = auth.get_login_url(
+        session_id="session-123",
+        redirect_params={"order_id": "order-123"},
+    )
     parsed = urllib.parse.urlparse(login_url)
     params = urllib.parse.parse_qs(parsed.query)
 
@@ -19,6 +22,7 @@ def test_get_login_url_sets_signed_oauth_state_and_session(monkeypatch):
     assert payload is not None
     assert payload["session"] == "session-123"
     assert payload["provider"] == auth.GOOGLE_PROVIDER
+    assert payload["redir"] == {"order_id": "order-123"}
     assert auth._is_valid_oauth_state(payload)
 
 
@@ -71,6 +75,25 @@ def test_get_login_url_supports_microsoft_provider(monkeypatch):
     assert state_payload is not None
     assert state_payload["provider"] == auth.MICROSOFT_PROVIDER
     assert state_payload["session"] == "session-abc"
+
+
+def test_oauth_state_validation_accepts_redirect_params(monkeypatch):
+    monkeypatch.setattr(auth.time, "time", lambda: 1_700_000_000)
+
+    payload = auth._build_oauth_state_payload(
+        nonce="nonce-1",
+        provider=auth.GOOGLE_PROVIDER,
+        issued_at=1_700_000_000,
+        redirect_params={"order_id": "abc123", "foo": "bar"},
+    )
+    payload["sig"] = auth._sign_oauth_state(payload)
+
+    encoded = auth._encode_oauth_state(payload)
+    decoded = auth._decode_oauth_state(encoded)
+
+    assert decoded is not None
+    assert decoded["redir"] == {"order_id": "abc123", "foo": "bar"}
+    assert auth._is_valid_oauth_state(decoded)
 
 
 def test_persist_auth_cookies_and_read_back_provider():
