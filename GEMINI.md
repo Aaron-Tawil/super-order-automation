@@ -1,94 +1,96 @@
 # Super Order Automation
 
 ## Project Overview
-This project is an automated pipeline for handling store orders and invoices. It ingests emails (containing PDFs or Excel files) from suppliers, extracts line-item data using Google's Vertex AI (Gemini models), and provides a Streamlit dashboard for review and management.
+This project is an automated pipeline for handling store orders and invoices. It ingests supplier emails containing PDF or Excel attachments, extracts structured order data with Gemini-based logic, persists the results to Firestore, and provides a Streamlit dashboard for review and correction.
 
 **Key Technologies:**
 *   **Language:** Python 3.11
-*   **AI/ML:** Google Vertex AI (Gemini)
+*   **AI/ML:** Google Gemini via `google-genai`
 *   **Cloud Platform:** Google Cloud Platform (GCP)
     *   **Compute:** Cloud Functions (2nd Gen), Cloud Run
     *   **Storage:** Cloud Storage (GCS), Firestore
     *   **Messaging:** Pub/Sub
 *   **Frontend:** Streamlit
-*   **Dependency Management:** `uv` (preferred) or `pip`
+*   **Dependency Management:** `uv`
 
 **Architecture:**
-1.  **Ingestion:** A Cloud Function (`order-bot`) monitors Gmail via push notifications (Pub/Sub), downloads attachments, and uploads them to a GCS bucket.
-2.  **Extraction:** A second Cloud Function (`process-order-event`) triggers on GCS upload (or Pub/Sub event), uses Vertex AI to extract data, and saves the result to Firestore.
-3.  **Dashboard:** A Streamlit application hosted on Cloud Run allows users to review extracted orders, manage supplier mappings, and export data to Excel.
+1.  **Ingestion:** A Cloud Function (`order-bot`) is triggered from Gmail push notifications via Pub/Sub and runs the unread-email ingestion flow.
+2.  **Eventing:** The ingestion layer uploads attachments to GCS and publishes `OrderIngestedEvent` messages.
+3.  **Processing:** `process-order-event` downloads the file, runs supplier detection plus extraction/post-processing, stores orders in Firestore, and generates outbound Excel attachments.
+4.  **Watch renewal:** `renew_watch` is an HTTP Cloud Function intended to be called by Cloud Scheduler.
+5.  **Dashboard:** A Streamlit app hosted on Cloud Run allows users to review inbox orders, open permanent `order_id` links, upload files manually, manage suppliers/items, and adjust test-order classification.
 
 ## Building and Running
 
 ### Prerequisites
 *   Python 3.11+
 *   Google Cloud SDK (`gcloud`) installed and authenticated
-*   `.env` file with necessary environment variables (see `.env.example` if available, or `deploy.py` for required vars)
+*   `.env` file with necessary environment variables (see [`.env.example`](/mnt/c/Dev/super-order-automation/.env.example))
 
 ### Local Development
 1.  **Install Dependencies:**
     ```bash
-    # Using pip
-    pip install -r requirements.txt
-    
-    # OR using uv
-    uv sync
+    uv sync --dev
     ```
 
 2.  **Run Dashboard Locally:**
     ```bash
-    streamlit run src/dashboard/app.py
+    uv run streamlit run src/dashboard/app.py
     ```
 
 3.  **Linting & Formatting:**
     The project uses `ruff` for linting and formatting.
     ```bash
-    ruff check .
-    ruff format .
+    uv run ruff check .
+    uv run ruff format .
     ```
 
 4.  **Testing:**
     ```bash
-    pytest
+    uv run pytest
     ```
 
 ### Deployment
 The project includes helper scripts for deploying to GCP.
 
 **1. Backend (Cloud Functions)**
-Deploys the email ingestion and order processing functions.
+Deploys the ingestion, processor, and watch-renewal backend resources.
 ```bash
-python deploy.py
+uv run python deploy.py
 # Options:
 #   --skip-secret       Skip updating the Gmail token in Secret Manager
 #   --skip-watch        Skip renewing the Gmail watch (local)
 #   --skip-renew-watch  Skip deploying the watch renewal function
+#   --skip-bot          Skip deploying the ingestion function
+#   --skip-processor    Skip deploying the processor function
 ```
 
 **2. Frontend (Cloud Run)**
 Builds the container image and deploys the Streamlit app.
 ```bash
-python deploy_ui.py
+uv run python deploy_ui.py
 ```
 
 ## Development Conventions
 
 *   **Project Structure:**
     *   `src/ingestion/`: Logic for Gmail monitoring and file upload.
-    *   `src/extraction/`: Vertex AI integration and prompt logic.
-    *   `src/dashboard/`: Streamlit UI components and pages.
-    *   `src/data/`: Database access layers (Firestore).
+    *   `src/extraction/`: Local supplier detection, Gemini integration, and prompt logic.
+    *   `src/dashboard/`: Streamlit UI, OAuth auth, inbox, and order management pages.
+    *   `src/data/`: Firestore-backed access layers for orders, items, and suppliers.
+    *   `src/cloud_functions/`: `order_bot`, `process_order_event`, and `renew_watch`.
     *   `src/shared/`: Shared models (Pydantic), logging, and config.
     *   `scripts/`: Utility scripts for maintenance and migration.
 
 *   **Configuration:**
     *   Environment variables are loaded from `.env` for local development.
     *   `src/shared/config.py` manages application settings.
+    *   Dashboard auth currently relies on OAuth client credentials, `ALLOWED_EMAILS`, and `COOKIE_SECRET`.
+    *   `TEST_ORDER_EMAILS` controls automatic test-order marking.
 
 *   **Code Style:**
-    *   Follows PEP 8 guidelines.
-    *   Enforced by `ruff`.
-    *   Type hints are encouraged (using `typing` module).
+    *   Use modern Python 3.11 style with type hints.
+    *   Import ordering and formatting are enforced by `ruff`.
 
 *   **Logging:**
     *   Structured logging is used throughout (`src.shared.logger`).
