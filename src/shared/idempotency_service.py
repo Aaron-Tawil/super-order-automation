@@ -6,7 +6,7 @@ double-processing of the same email trigger.
 """
 
 import os
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from google.api_core import exceptions
 from google.cloud import firestore
@@ -19,8 +19,13 @@ COLLECTION_NAME = "processed_messages"
 logger = get_logger(__name__)
 
 
+def _utc_now() -> datetime:
+    """Return a timezone-aware UTC timestamp."""
+    return datetime.now(UTC)
+
+
 def _normalize_dt(value):
-    """Normalize Firestore datetimes for reliable utcnow comparisons."""
+    """Normalize Firestore datetimes for reliable UTC-aware comparisons."""
     if not value:
         return None
     if isinstance(value, str):
@@ -28,8 +33,10 @@ def _normalize_dt(value):
             value = datetime.fromisoformat(value)
         except ValueError:
             return None
-    if getattr(value, "tzinfo", None):
-        value = value.replace(tzinfo=None)
+    if getattr(value, "tzinfo", None) is None:
+        value = value.replace(tzinfo=UTC)
+    else:
+        value = value.astimezone(UTC)
     return value
 
 
@@ -59,7 +66,7 @@ class IdempotencyService:
             return False
 
         doc_ref = self.collection.document(message_id)
-        now = datetime.utcnow()
+        now = _utc_now()
         expires_at = now + timedelta(minutes=expiry_minutes)
 
         try:
@@ -120,7 +127,7 @@ class IdempotencyService:
             doc_ref = self.collection.document(message_id)
             payload = {
                 "status": "COMPLETED" if success else "FAILED",
-                "processed_at": datetime.utcnow(),
+                "processed_at": _utc_now(),
             }
             if error_message:
                 payload["error_message"] = error_message[:2000]

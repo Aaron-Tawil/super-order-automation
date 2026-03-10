@@ -32,7 +32,7 @@ if not settings.GEMINI_API_KEY and not settings.PROJECT_ID:
     logger.warning("WARNING: Neither GEMINI_API_KEY nor GCP_PROJECT_ID found.")
 
 # Page config
-st.set_page_config(page_title="Order-Bot", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Order-Bot", layout="wide", initial_sidebar_state="auto")
 
 
 # Load external CSS globally BEFORE authentication stops the script
@@ -228,6 +228,7 @@ if current_page == "upload":
                             is_test=bool(selected_order_type),
                             metadata=order_metadata,
                             new_items_data=result.new_items_data,
+                            added_items_barcodes=result.added_barcodes,
                         )
 
                         if not doc_id:

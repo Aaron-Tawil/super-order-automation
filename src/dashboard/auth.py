@@ -217,10 +217,23 @@ def _decode_payload(encoded: str | None) -> dict[str, str | int] | None:
     if not isinstance(payload, dict):
         return None
 
-    normalized: dict[str, str | int] = {}
+    normalized: dict[str, str | int | dict[str, str]] = {}
     for key, value in payload.items():
         if isinstance(value, (str, int)):
             normalized[key] = value.strip() if isinstance(value, str) else value
+        elif isinstance(value, dict):
+            nested: dict[str, str] = {}
+            for nested_key, nested_value in value.items():
+                if not isinstance(nested_key, str):
+                    continue
+                if not isinstance(nested_value, str):
+                    continue
+                cleaned_key = nested_key.strip()
+                cleaned_value = nested_value.strip()
+                if cleaned_key and cleaned_value:
+                    nested[cleaned_key] = cleaned_value
+            if nested:
+                normalized[key] = nested
     return normalized
 
 
@@ -446,11 +459,22 @@ def _is_valid_oauth_state(payload: dict[str, str | int] | None) -> bool:
     if session_id is not None and not isinstance(session_id, str):
         return False
 
+    redirect_params = payload.get("redir")
+    if redirect_params is not None:
+        if not isinstance(redirect_params, dict):
+            return False
+        for key, value in redirect_params.items():
+            if not isinstance(key, str) or not key.strip():
+                return False
+            if not isinstance(value, str) or not value.strip():
+                return False
+
     unsigned_payload = _build_oauth_state_payload(
         nonce=nonce,
         provider=provider,
         issued_at=issued_at,
         session_id=session_id,
+        redirect_params=redirect_params if isinstance(redirect_params, dict) else None,
     )
     expected_sig = _sign_oauth_state(unsigned_payload)
     if not hmac.compare_digest(provided_sig, expected_sig):

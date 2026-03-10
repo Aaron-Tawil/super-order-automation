@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from google.cloud import firestore
@@ -10,6 +10,11 @@ from src.shared.models import ExtractedOrder
 logger = get_logger(__name__)
 
 
+def _utc_now() -> datetime:
+    """Return a timezone-aware UTC timestamp."""
+    return datetime.now(UTC)
+
+
 def save_order_to_firestore(
     order: ExtractedOrder,
     source_file_uri: str,
@@ -17,6 +22,7 @@ def save_order_to_firestore(
     is_test: bool = False,
     metadata: dict[str, Any] | None = None,
     new_items_data: list[dict[str, Any]] | None = None,
+    added_items_barcodes: list[str] | None = None,
 ) -> str:
     """
     Saves the extracted order to Firestore.
@@ -30,8 +36,8 @@ def save_order_to_firestore(
         order_dict = order.model_dump()
 
         # Add metadata
-        order_dict["created_at"] = datetime.utcnow()
-        order_dict["updated_at"] = datetime.utcnow()
+        order_dict["created_at"] = _utc_now()
+        order_dict["updated_at"] = _utc_now()
         order_dict["gcs_uri"] = source_file_uri
         order_dict["status"] = "EXTRACTED"
         order_dict["is_test"] = bool(is_test or order_dict.get("is_test", False))
@@ -50,6 +56,13 @@ def save_order_to_firestore(
         for field in ("sender", "subject", "filename"):
             if metadata.get(field):
                 order_dict["ui_metadata"][field] = metadata[field]
+
+        if added_items_barcodes:
+            order_dict["ui_metadata"]["added_items_barcodes"] = [
+                str(barcode).strip()
+                for barcode in added_items_barcodes
+                if str(barcode).strip()
+            ]
 
         # Create a new document
         doc_ref = collection_ref.document()  # Auto-generate ID
@@ -86,14 +99,14 @@ def upsert_processing_event(
             "event_id": str(event_id),
             "status": status,
             "stage": stage,
-            "updated_at": datetime.utcnow(),
+            "updated_at": _utc_now(),
         }
         if details:
             payload["details"] = details
 
         existing = doc_ref.get()
         if not existing.exists:
-            payload["created_at"] = datetime.utcnow()
+            payload["created_at"] = _utc_now()
 
         doc_ref.set(payload, merge=True)
         logger.info(f"Processing event {event_id} -> {status}/{stage}")

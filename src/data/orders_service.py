@@ -2,7 +2,7 @@
 Orders service for dashboard listing and lookup.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from google.cloud import firestore
 
@@ -10,6 +10,11 @@ from src.shared.config import settings
 from src.shared.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _utc_now() -> datetime:
+    """Return a timezone-aware UTC timestamp."""
+    return datetime.now(UTC)
 
 
 class OrdersService:
@@ -81,7 +86,7 @@ class OrdersService:
             doc_ref = self._collection.document(str(order_id))
             if not doc_ref.get().exists:
                 return False
-            doc_ref.update({"is_test": bool(is_test), "updated_at": datetime.utcnow()})
+            doc_ref.update({"is_test": bool(is_test), "updated_at": _utc_now()})
             return True
         except Exception as e:
             logger.error(f"Failed updating is_test for order {order_id}: {e}")
@@ -116,7 +121,7 @@ class OrdersService:
             if not doc_ref.get().exists:
                 return False
             
-            new_order_data["updated_at"] = datetime.utcnow()
+            new_order_data["updated_at"] = _utc_now()
             doc_ref.update(new_order_data)
             return True
         except Exception as e:

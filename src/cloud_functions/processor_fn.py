@@ -225,6 +225,7 @@ def process_order_event(cloud_event: Any):
                     "phase1_reasoning": result.phase1_reasoning,
                 },
                 new_items_data=result.new_items_data if i == 0 else None,
+                added_items_barcodes=result.added_barcodes if i == 0 else None,
             )
             logger.info(f"{ctx}✅ Order saved to Firestore (ID: {doc_id}).")
 

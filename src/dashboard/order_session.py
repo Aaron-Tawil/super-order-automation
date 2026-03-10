@@ -24,6 +24,26 @@ from src.shared.utils import get_mime_type
 logger = get_logger(__name__)
 
 
+def _collect_revertable_barcodes(metadata: dict, new_items_data: list[dict]) -> list[str]:
+    """Return the barcodes that can be safely reverted for the current order."""
+    seen: set[str] = set()
+    revertable: list[str] = []
+
+    raw_barcodes = metadata.get("added_items_barcodes") or [
+        item.get("barcode")
+        for item in new_items_data
+    ]
+
+    for raw_barcode in raw_barcodes:
+        barcode = str(raw_barcode or "").strip()
+        if not barcode or barcode in seen:
+            continue
+        seen.add(barcode)
+        revertable.append(barcode)
+
+    return revertable
+
+
 # ---------------------------------------------------------------------------
 # Main render function
 # ---------------------------------------------------------------------------
@@ -338,6 +358,7 @@ def render_order_session() -> None:  # noqa: C901
         st.divider()
         st.subheader(get_text("new_items_section_title"))
         st.caption(get_text("new_items_section_caption"))
+        revertable_barcodes = _collect_revertable_barcodes(metadata, new_items_data)
 
         from src.shared.product_pricing import calculate_sell_price  # noqa: PLC0415
 
@@ -377,17 +398,16 @@ def render_order_session() -> None:  # noqa: C901
                 width="stretch",
             )
 
-            added_barcodes = metadata.get("added_items_barcodes", [])
-            if added_barcodes:
+            if revertable_barcodes:
                 if st.button(
-                    get_text("btn_revert_items", count=len(added_barcodes)),
+                    get_text("btn_revert_items", count=len(revertable_barcodes)),
                     type="secondary",
                     width="stretch",
                 ):
                     try:
-                        deleted = items_service.delete_items_by_barcodes(added_barcodes)
+                        deleted = items_service.delete_items_by_barcodes(revertable_barcodes)
                         st.success(get_text("msg_revert_success", count=deleted))
-                        
+
                         metadata["added_items_barcodes"] = []
                         data["new_items"] = []
                         if "ui_metadata" not in data:
@@ -395,11 +415,11 @@ def render_order_session() -> None:  # noqa: C901
                         data["ui_metadata"] = metadata
 
                         st.session_state["extracted_data"] = data
-                        
+
                         # Persist to permanent orders collection
                         if order_id:
                             OrdersService().update_order_data(
-                                order_id, 
+                                order_id,
                                 {"new_items": [], "ui_metadata": metadata}
                             )
                         st.rerun()

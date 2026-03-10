@@ -1,14 +1,26 @@
-/* Global RTL & Alignment */
-body {
+/* Keep Streamlit layout containers in their native direction.
+   Applying RTL to the app shell breaks sidebar collapse/drawer behavior. */
+html,
+body,
+.stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stSidebar"] {
+    direction: ltr;
+}
+
+/* Apply RTL only to user-facing content areas */
+[data-testid="stMainBlockContainer"],
+[data-testid="stSidebarUserContent"] {
     direction: rtl;
     text-align: right;
 }
-.stApp {
-    direction: rtl;
-}
 
 /* Align Streamlit widgets to right */
-.stTextInput > label, .stSelectbox > label, .stNumberInput > label, .stTextArea > label, .stFileUploader > label {
+.stTextInput > label,
+.stSelectbox > label,
+.stNumberInput > label,
+.stTextArea > label,
+.stFileUploader > label {
     text-align: right;
     width: 100%;
     display: block;
@@ -30,9 +42,8 @@ h1, h2, h3, h4, h5, h6, .stMarkdown, .stText, p {
     justify-content: right;
 }
 
-/* Sidebar alignment */
-[data-testid="stSidebar"] {
-    direction: rtl; 
+/* Sidebar content alignment without changing drawer mechanics */
+[data-testid="stSidebarUserContent"] {
     text-align: right;
 }
 
@@ -44,7 +55,7 @@ h1, h2, h3, h4, h5, h6, .stMarkdown, .stText, p {
 
 /* Button alignment in columns */
 .stButton button {
-    float: right;
+    float: none;
 }
 
 /* Hide the 'Deploy' button */
@@ -52,15 +63,21 @@ h1, h2, h3, h4, h5, h6, .stMarkdown, .stText, p {
     display: none;
 }
 
-/* Hide sidebar collapse button */
-[data-testid="stSidebarCollapsedControl"], section[data-testid="stSidebar"] > div > div:first-child button {
-    display: none !important;
-    visibility: hidden !important;
+/* Keep the sidebar toggle visible so navigation works on mobile */
+[data-testid="stSidebarCollapsedControl"],
+section[data-testid="stSidebar"] > div > div:first-child button {
+    display: inline-flex !important;
+    visibility: visible !important;
+}
+
+[data-testid="stSidebarCollapsedControl"] {
+    left: 0.75rem !important;
+    right: auto !important;
 }
 
 /* Order session: header card subtle shadow */
 [data-testid="stVerticalBlockBorderWrapper"] {
-    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
     border-radius: 8px;
 }
 
@@ -68,4 +85,70 @@ h1, h2, h3, h4, h5, h6, .stMarkdown, .stText, p {
 [data-testid="stLinkButton"] a {
     width: 100% !important;
     display: block;
+}
+
+/* Base spacing and table behavior */
+[data-testid="stMainBlockContainer"] {
+    padding-top: 1.25rem;
+}
+
+[data-testid="stDataFrame"],
+[data-testid="stTable"] {
+    overflow-x: auto;
+}
+
+/* Mobile layout: stack columns and use the sidebar as a real drawer */
+@media (max-width: 768px) {
+    [data-testid="stMainBlockContainer"] {
+        padding: 0.85rem 0.8rem 3rem;
+    }
+
+    [data-testid="stSidebar"] {
+        min-width: min(88vw, 20rem) !important;
+        max-width: min(88vw, 20rem) !important;
+    }
+
+    .stApp [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap;
+        gap: 0.75rem !important;
+    }
+
+    .stApp [data-testid="column"] {
+        min-width: 100% !important;
+        flex: 1 1 100% !important;
+    }
+
+    .stButton button,
+    .stDownloadButton button,
+    [data-testid="stLinkButton"] a {
+        width: 100% !important;
+    }
+
+    .stTabs [data-baseweb="tab-list"] {
+        flex-wrap: wrap;
+        gap: 0.35rem;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        flex: 1 1 48%;
+        white-space: normal;
+    }
+
+    .stRadio [role="radiogroup"] {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.45rem;
+    }
+
+    h1 {
+        font-size: 1.55rem !important;
+    }
+
+    h2 {
+        font-size: 1.3rem !important;
+    }
+
+    h3 {
+        font-size: 1.15rem !important;
+    }
 }
