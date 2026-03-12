@@ -9,8 +9,8 @@ from pathlib import Path
 
 import requests
 import streamlit as st
-from streamlit_cookies_manager.cookie_manager import CookieManager, CookiesNotReady
 
+from src.dashboard.local_cookie_manager import CookieManager, CookiesNotReady
 from src.shared.config import settings
 from src.shared.logger import get_logger
 from src.shared.translations import get_text

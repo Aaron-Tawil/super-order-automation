@@ -39,7 +39,7 @@ def test_dashboard_file_upload_ui():
 
 
 def test_dashboard_navigation():
-    """Test sidebar navigation."""
+    """Test primary navigation buttons."""
     with (
         patch("src.dashboard.auth.require_login"),
         patch("src.dashboard.inbox.OrdersService") as mock_orders_service,
@@ -49,9 +49,8 @@ def test_dashboard_navigation():
         at = AppTest.from_file("src/dashboard/app.py")
         at.run()
 
-        # Sidebar buttons
-        sidebar_labels = [button.label for button in at.sidebar.button]
-        assert any("תיבת הזמנות" in label for label in sidebar_labels)
-        assert any("העלאה ידנית" in label for label in sidebar_labels)
-        assert any("ניהול ספקים" in label for label in sidebar_labels)
-        assert any("ניהול פריטים" in label for label in sidebar_labels)
+        button_labels = [button.label for button in at.button]
+        assert any("תיבת הזמנות" in label for label in button_labels)
+        assert any("העלאה ידנית" in label for label in button_labels)
+        assert any("ניהול ספקים" in label for label in button_labels)
+        assert any("ניהול פריטים" in label for label in button_labels)

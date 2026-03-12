@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import os
+import tempfile
 
 import pandas as pd
 import streamlit as st
@@ -472,6 +473,7 @@ def render_order_session() -> None:  # noqa: C901
         # Action buttons row
         source_uri = metadata.get("source_file_uri") or data.get("gcs_uri")
         has_retried = bool(st.session_state.get("playground_result"))
+        has_instruction_text = bool((draft_instructions or "").strip())
 
         btn_col1, btn_col2, btn_col3 = st.columns([2, 2, 2])
 
@@ -498,9 +500,11 @@ def render_order_session() -> None:  # noqa: C901
                 "💾 שמור כהוראות קבועות",
                 type="secondary",
                 width="stretch",
-                disabled=(not has_retried or not can_save),
+                disabled=(not can_save or not has_instruction_text),
                 help=(
-                    "שמור את ההוראות שנוסו כהוראות הקבועות של הספק."
+                    "שמור את הטקסט הנוכחי כהוראות הקבועות של הספק."
+                    if can_save and has_instruction_text else
+                    "כתוב הוראות כדי לשמור אותן כהוראות קבועות."
                     if can_save else
                     "לא ניתן לשמור — ספק לא מזוהה."
                 ),
@@ -509,11 +513,16 @@ def render_order_session() -> None:  # noqa: C901
         # --- Run the extraction ---
         if run_btn:
             with st.spinner("מריץ AI מחדש עם ההוראות... זה עשוי לקחת כ-30 שניות"):
+                temp_path: str | None = None
                 try:
-                    temp_path = "temp_playground_file"
                     filename_retry = metadata.get("filename") or data.get("ui_metadata", {}).get("filename", "unknown.pdf")
-                    if "." in filename_retry:
-                        temp_path += os.path.splitext(filename_retry)[1]
+                    temp_suffix = os.path.splitext(filename_retry)[1] if "." in filename_retry else ""
+                    with tempfile.NamedTemporaryFile(
+                        prefix="playground_",
+                        suffix=temp_suffix,
+                        delete=False,
+                    ) as tmp_file:
+                        temp_path = tmp_file.name
 
                     if download_file_from_gcs(source_uri, temp_path):
                         from src.core.pipeline import ExtractionPipeline  # noqa: PLC0415
@@ -535,15 +544,15 @@ def render_order_session() -> None:  # noqa: C901
                             st.rerun()
                         else:
                             st.error(get_text("phase_extract_fail"))
-
-                        if os.path.exists(temp_path):
-                            os.remove(temp_path)
                     else:
                         st.error(get_text("retry_fail_download"))
                 except Exception as e:
                     st.error(get_text("error_general", error=e))
                     import traceback  # noqa: PLC0415
                     st.code(traceback.format_exc())
+                finally:
+                    if temp_path and os.path.exists(temp_path):
+                        os.remove(temp_path)
 
         # --- Adopt playground results into live order ---
         if adopt_btn and has_retried:
@@ -594,8 +603,8 @@ def render_order_session() -> None:  # noqa: C901
             st.rerun()
 
         # --- Save instructions permanently ---
-        if save_btn and has_retried and can_save:
-            used_instructions = st.session_state.get("playground_instructions", draft_instructions)
+        if save_btn and can_save and has_instruction_text:
+            used_instructions = draft_instructions.strip()
             try:
                 ok = SupplierService().update_supplier_instructions(supplier_code, used_instructions)
                 if ok:

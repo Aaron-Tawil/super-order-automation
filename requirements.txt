@@ -251,9 +251,7 @@ cryptography==46.0.5 \
     --hash=sha256:e9251e3be159d1020c4030bd2e5f84d6a43fe54b6c19c12f51cde9542a2817b2 \
     --hash=sha256:f145bba11b878005c496e93e257c1e88f154d278d2638e6450d17e0f31e558d2 \
     --hash=sha256:fe346b143ff9685e40192a4960938545c699054ba11d4f9029f94751e3f71d87
-    # via
-    #   google-auth
-    #   streamlit-cookies-manager
+    # via google-auth
 curl-cffi==0.13.0 \
     --hash=sha256:28911b526e8cd4aa0e5e38401bfe6887e8093907272f1f67ca22e6beb2933a51 \
     --hash=sha256:434cadbe8df2f08b2fc2c16dff2779fb40b984af99c06aa700af898e185bb9db \
@@ -1430,12 +1428,6 @@ starlette==0.52.1 \
 streamlit==1.54.0 \
     --hash=sha256:09965e6ae7eb0357091725de1ce2a3f7e4be155c2464c505c40a3da77ab69dd8 \
     --hash=sha256:a7b67d6293a9f5f6b4d4c7acdbc4980d7d9f049e78e404125022ecb1712f79fc
-    # via
-    #   streamlit-cookies-manager
-    #   super-order-automation
-streamlit-cookies-manager==0.2.0 \
-    --hash=sha256:12503dc3367dfc2a780cb9e4a81ad791737806a7b9d1c25a006386e32aabe956 \
-    --hash=sha256:498531778bd4a63267364e8986b3774319d3ba2f4ba65a92357196723966e4d4
     # via super-order-automation
 tenacity==9.1.4 \
     --hash=sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55 \

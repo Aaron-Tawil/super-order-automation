@@ -3,8 +3,7 @@
 html,
 body,
 .stApp,
-[data-testid="stAppViewContainer"],
-[data-testid="stSidebar"] {
+[data-testid="stAppViewContainer"] {
     direction: ltr;
 }
 
@@ -42,11 +41,6 @@ h1, h2, h3, h4, h5, h6, .stMarkdown, .stText, p {
     justify-content: right;
 }
 
-/* Sidebar content alignment without changing drawer mechanics */
-[data-testid="stSidebarUserContent"] {
-    text-align: right;
-}
-
 /* Toast/Alert alignment */
 .stAlert {
     direction: rtl;
@@ -63,16 +57,10 @@ h1, h2, h3, h4, h5, h6, .stMarkdown, .stText, p {
     display: none;
 }
 
-/* Keep the sidebar toggle visible so navigation works on mobile */
-[data-testid="stSidebarCollapsedControl"],
-section[data-testid="stSidebar"] > div > div:first-child button {
-    display: inline-flex !important;
-    visibility: visible !important;
-}
-
+/* Disable Streamlit's sidebar shell; navigation is rendered in-page for reliable mobile behavior */
+[data-testid="stSidebar"],
 [data-testid="stSidebarCollapsedControl"] {
-    left: 0.75rem !important;
-    right: auto !important;
+    display: none !important;
 }
 
 /* Order session: header card subtle shadow */
@@ -97,15 +85,10 @@ section[data-testid="stSidebar"] > div > div:first-child button {
     overflow-x: auto;
 }
 
-/* Mobile layout: stack columns and use the sidebar as a real drawer */
+/* Mobile layout: stack columns and simplify controls */
 @media (max-width: 768px) {
     [data-testid="stMainBlockContainer"] {
         padding: 0.85rem 0.8rem 3rem;
-    }
-
-    [data-testid="stSidebar"] {
-        min-width: min(88vw, 20rem) !important;
-        max-width: min(88vw, 20rem) !important;
     }
 
     .stApp [data-testid="stHorizontalBlock"] {

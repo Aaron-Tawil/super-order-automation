@@ -41,6 +41,45 @@ def load_css(file_path):
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 
+def render_primary_navigation() -> None:
+    """Render primary navigation in the main content area."""
+    nav_items = [
+        (get_text("nav_inbox"), "inbox"),
+        (get_text("nav_upload"), "upload"),
+        (get_text("nav_suppliers"), "suppliers"),
+        (get_text("nav_items"), "items"),
+    ]
+
+    with st.container(border=True):
+        st.caption(get_text("nav_title"))
+
+        if "user_email" in st.session_state:
+            user_col, logout_col = st.columns([4, 1])
+            with user_col:
+                st.caption(get_text("auth_logged_in_as", email=st.session_state["user_email"]))
+            with logout_col:
+                if st.button(get_text("auth_btn_logout"), width="stretch", key="top_nav_logout"):
+                    auth.logout()
+
+        nav_columns = st.columns(len(nav_items))
+        for column, (label, page_name) in zip(nav_columns, nav_items, strict=False):
+            with column:
+                is_current_page = st.session_state.get("page", "inbox") == page_name
+                if st.button(
+                    label,
+                    width="stretch",
+                    type="primary" if is_current_page else "secondary",
+                    key=f"top_nav_{page_name}",
+                ):
+                    st.session_state["page"] = page_name
+                    st.rerun()
+
+        if settings.GEMINI_API_KEY or settings.PROJECT_ID:
+            st.success("AI מחובר למערכת ✅")
+        else:
+            st.error("מפתח AI חסר ❌")
+
+
 css_path = os.path.join(os.path.dirname(__file__), "styles.css")
 load_css(css_path)
 
@@ -95,39 +134,7 @@ if order_id and "extracted_data" not in st.session_state:
 if "page" not in st.session_state:
     st.session_state["page"] = "inbox"
 
-# Sidebar for navigation
-with st.sidebar:
-    st.title(get_text("nav_title"))
-
-    # Add User status at the very top of navigation
-    if "user_email" in st.session_state:
-        st.caption(get_text("auth_logged_in_as", email=st.session_state["user_email"]))
-        if st.button(get_text("auth_btn_logout"), width="stretch"):
-            auth.logout()
-        st.divider()
-
-    if st.button(get_text("nav_inbox"), width="stretch"):
-        st.session_state["page"] = "inbox"
-        st.rerun()
-
-    if st.button(get_text("nav_upload"), width="stretch"):
-        st.session_state["page"] = "upload"
-        st.rerun()
-
-    if st.button(get_text("nav_suppliers"), width="stretch"):
-        st.session_state["page"] = "suppliers"
-        st.rerun()
-
-    if st.button(get_text("nav_items"), width="stretch"):
-        st.session_state["page"] = "items"
-        st.rerun()
-
-    st.divider()
-    # Debug Info
-    if settings.GEMINI_API_KEY or settings.PROJECT_ID:
-        st.sidebar.success("AI מחובר למערכת ✅")
-    else:
-        st.sidebar.error("מפתח AI חסר ❌")
+render_primary_navigation()
 
 # --- Page Routing ---
 current_page = st.session_state.get("page", "inbox")
