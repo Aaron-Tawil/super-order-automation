@@ -1,14 +1,12 @@
 # Firestore Maintenance Guide
 
-This project now has three Firestore maintenance scripts:
+The only Firestore maintenance script currently kept in this repository is:
 
 - `scripts/firestore_audit.py`
-- `scripts/cleanup_firestore_collections.py`
-- `scripts/migrate_orders_legacy_fields.py`
 
-## 1) Audit current DB structure
+## Audit current DB structure
 
-Generate live inventory reports:
+Generate a live inventory report:
 
 ```bash
 uv run python scripts/firestore_audit.py --project-id super-home-automation
@@ -19,55 +17,13 @@ Outputs:
 - `docs/firestore-audit.md`
 
 Notes:
-- `processed_messages` + `processed_order_events` coexistence is intentional in this codebase:
-  - `processed_messages`: ingestion lock by Gmail `message_id`
-  - `processed_order_events`: processor lock by `event_id`
-
-## 2) Clean legacy root collections
-
-Dry-run first:
-
-```bash
-uv run python scripts/cleanup_firestore_collections.py
-```
-
-Execute delete:
-
-```bash
-uv run python scripts/cleanup_firestore_collections.py --execute --yes
-```
-
-Defaults target:
-- `products`
-- `health_check`
-
-Override target collections:
-
-```bash
-uv run python scripts/cleanup_firestore_collections.py --collections products health_check
-```
-
-## 3) Migrate legacy fields from `orders`
-
-Targets:
-- top-level: `date`, `vat_rate`
-- nested: `line_items[].vat_status`
-
-Dry-run first:
-
-```bash
-uv run python scripts/migrate_orders_legacy_fields.py
-```
-
-Execute migration:
-
-```bash
-uv run python scripts/migrate_orders_legacy_fields.py --execute --yes
-```
+- `processed_messages` and `processed_order_events` coexist intentionally.
+- `processed_messages` is the ingestion lock keyed by Gmail `message_id`.
+- `processed_order_events` is the processor lock keyed by `event_id`.
 
 ## Recommended operational flow
 
-1. Run audit.
-2. Run cleanup/migration dry-runs.
-3. Run execute mode.
-4. Re-run audit to verify final state.
+1. Run the audit script.
+2. Review the generated Markdown and JSON reports.
+3. Decide any manual cleanup or one-off migration from the report output.
+4. Re-run the audit after changes to verify the final state.

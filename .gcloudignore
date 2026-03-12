@@ -46,6 +46,7 @@ example/
 
 # Agent & Bot Artifacts
 .agent/
+.codex/
 .sessions.json
 
 # Documentation

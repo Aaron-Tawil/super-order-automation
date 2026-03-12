@@ -72,9 +72,6 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
 
-[tool.ruff.lint.per-file-ignores]
-"src/shared/price_utils.py" = ["F811", "F841"]  # Intentional: v2 replaces v1 function
-
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"

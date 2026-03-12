@@ -13,6 +13,7 @@ venv
 .idea/
 .vscode/
 .agent/
+.codex/
 
 # Local data & secrets
 data-excel/
