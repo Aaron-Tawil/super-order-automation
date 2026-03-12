@@ -50,6 +50,7 @@ EXCLUDED_EMAIL_DOMAINS = {
     "013net.net",
     "barak.net.il",
     "internet-zahav.net",
+    "inter.net.il",
     # Your company domains (don't match to self)
     "superhome.co.il",
 }
