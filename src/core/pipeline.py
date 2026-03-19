@@ -38,6 +38,7 @@ class PipelineResult(BaseModel):
     
     new_items_added: int = 0
     added_barcodes: list[str] = Field(default_factory=list)
+    pending_new_items: list[dict] = Field(default_factory=list)
     new_items_data: list[dict] = Field(default_factory=list) # For Dashboard Display
     
     raw_phase1_response: dict | None = None
@@ -230,13 +231,10 @@ class ExtractionPipeline:
                              seen.add(item.barcode)
                      
                      if items_to_add:
-                         try:
-                             added_count = self.items_service.add_new_items_batch(items_to_add)
-                             result.new_items_added += added_count
-                             added_barcodes.extend([i["barcode"] for i in items_to_add])
-                             logger.info(f"{trace_ctx}✅ Auto-added {added_count} new items to DB.")
-                         except Exception as e:
-                             logger.error(f"{trace_ctx}Failed to save new items: {e}")
+                         result.pending_new_items.extend(items_to_add)
+                         result.new_items_added += len(items_to_add)
+                         added_barcodes.extend([i["barcode"] for i in items_to_add])
+                         logger.info(f"{trace_ctx}📝 Staged {len(items_to_add)} new items for later persistence.")
 
         result.added_barcodes = added_barcodes
         result.new_items_data = new_items_display_data

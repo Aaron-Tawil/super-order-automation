@@ -331,3 +331,66 @@ def test_process_order_event_no_orders(
     kwargs = mock_idempotency_service.return_value.mark_message_completed.call_args.kwargs
     assert kwargs["success"] is False
     assert mock_processing_status.call_count >= 2
+
+
+def test_process_order_event_gmail_init_failure_does_not_abort_success(
+    mock_pipeline,
+    mock_download,
+    mock_save_firestore,
+    mock_processing_status,
+    mock_idempotency_service,
+):
+    event_payload = {
+        "gcs_uri": "gs://bucket/invoice.pdf",
+        "bucket_name": "bucket",
+        "blob_name": "invoice.pdf",
+        "filename": "invoice.pdf",
+        "mime_type": "application/pdf",
+        "email_metadata": {
+            "message_id": "msg1",
+            "thread_id": "thread1",
+            "sender": "sender@example.com",
+            "subject": "Invoice 123",
+            "received_at": "2023-01-01T12:00:00",
+        },
+    }
+    cloud_event = create_cloud_event(event_payload)
+    mock_download.return_value = True
+    mock_idempotency_service.return_value.check_and_lock_message.return_value = True
+    mock_save_firestore.return_value = "order-123"
+
+    mock_order = ExtractedOrder(
+        invoice_number="INV-123",
+        supplier_global_id=None,
+        supplier_email=None,
+        supplier_phone=None,
+        warnings=[],
+        line_items=[LineItem(barcode="7290000000001", description="Test Item", quantity=1.0)],
+    )
+    mock_pipeline.return_value.run_pipeline.return_value = PipelineResult(
+        orders=[mock_order],
+        supplier_code="S123",
+        supplier_name="Test Supplier",
+        total_cost_usd=0.1,
+        pending_new_items=[{"barcode": "7290000000001", "name": "Test Item", "item_code": "7290000000001"}],
+        new_items_data=[{"barcode": "7290000000001", "description": "Test Item", "final_net_price": 12.3}],
+        added_barcodes=["7290000000001"],
+    )
+
+    with patch("src.cloud_functions.processor_fn.get_gmail_service", side_effect=RuntimeError("ssl boom")), \
+         patch("src.cloud_functions.processor_fn.send_reply") as mock_reply, \
+         patch("src.cloud_functions.processor_fn.generate_excel_from_order") as mock_order_excel, \
+         patch("src.cloud_functions.processor_fn.generate_new_items_excel") as mock_new_items_excel, \
+         patch("src.cloud_functions.processor_fn.ItemsService") as mock_items_service:
+        process_order_event(cloud_event)
+
+    mock_reply.assert_not_called()
+    mock_order_excel.assert_called_once()
+    mock_new_items_excel.assert_called_once()
+    mock_items_service.return_value.add_new_items_batch.assert_called_once_with(
+        [{"barcode": "7290000000001", "name": "Test Item", "item_code": "7290000000001"}]
+    )
+    assert mock_save_firestore.call_args.kwargs["added_items_barcodes"] is None
+    kwargs = mock_idempotency_service.return_value.mark_message_completed.call_args.kwargs
+    assert kwargs["success"] is True
+    assert mock_processing_status.call_count >= 2

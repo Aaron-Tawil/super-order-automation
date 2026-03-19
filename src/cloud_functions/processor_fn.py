@@ -9,6 +9,7 @@ import functions_framework
 from pydantic import ValidationError
 
 from src.core.events import OrderIngestedEvent
+from src.data.items_service import ItemsService
 from src.export.excel_generator import generate_excel_from_order
 from src.export.new_items_generator import generate_new_items_excel
 from src.extraction.vertex_client import init_client
@@ -152,8 +153,13 @@ def process_order_event(cloud_event: Any):
         orders = result.orders
         final_code = result.supplier_code
         supplier_name = result.supplier_name
+        pending_new_items = result.pending_new_items
 
-        gmail_service = get_gmail_service()
+        try:
+            gmail_service = get_gmail_service()
+        except Exception as gmail_err:
+            logger.error(f"{ctx}Failed to initialize Gmail service: {gmail_err}", exc_info=True)
+            gmail_service = None
         if not gmail_service:
             logger.warning(f"{ctx}Gmail service not available. Feedback emails will not be sent.")
 
@@ -225,9 +231,18 @@ def process_order_event(cloud_event: Any):
                     "phase1_reasoning": result.phase1_reasoning,
                 },
                 new_items_data=result.new_items_data if i == 0 else None,
-                added_items_barcodes=result.added_barcodes if i == 0 else None,
+                added_items_barcodes=result.added_barcodes if i == 0 and not pending_new_items else None,
             )
+            if not doc_id:
+                raise RuntimeError(f"Failed to persist order {order.invoice_number or i + 1} to Firestore")
             logger.info(f"{ctx}✅ Order saved to Firestore (ID: {doc_id}).")
+
+            if i == 0 and pending_new_items:
+                try:
+                    added_count = ItemsService().add_new_items_batch(pending_new_items)
+                    logger.info(f"{ctx}✅ Persisted {added_count} staged new items to DB.")
+                except Exception as item_err:
+                    logger.error(f"{ctx}Failed to persist staged new items: {item_err}")
 
             safe_invoice_num = re.sub(r"[^a-zA-Z0-9_-]", "_", str(order.invoice_number))
             safe_supplier_code = re.sub(r"[^a-zA-Z0-9_-]", "_", str(final_code))
@@ -318,7 +333,11 @@ def process_order_event(cloud_event: Any):
             processing_lock.mark_message_completed(event_id, success=False, error_message=str(e))
         if event:
             if not gmail_service:
-                gmail_service = get_gmail_service()
+                try:
+                    gmail_service = get_gmail_service()
+                except Exception as gmail_err:
+                    logger.error(f"{_ctx(event_id, message_id)}Failed to initialize Gmail service for error reply: {gmail_err}")
+                    gmail_service = None
             if gmail_service:
                 send_reply(
                     gmail_service,

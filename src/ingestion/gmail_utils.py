@@ -2,6 +2,7 @@ import base64
 import mimetypes
 import os
 import pickle
+import random
 import time
 from email import encoders
 from email.mime.base import MIMEBase
@@ -15,6 +16,24 @@ from src.shared.config import settings
 from src.shared.logger import get_logger
 
 logger = get_logger(__name__)
+
+GMAIL_AUTH_MAX_RETRIES = 5
+GMAIL_SEND_MAX_RETRIES = 5
+RETRYABLE_NETWORK_KEYWORDS = ("SSL", "EOF", "Connection", "Timeout", "temporarily unavailable", "reset by peer")
+
+
+def _backoff_sleep(attempt: int, base_delay: float = 1.0, max_delay: float = 30.0) -> float:
+    """Sleep with exponential backoff and a small jitter."""
+    delay = min(max_delay, base_delay * (2**attempt))
+    jitter = random.uniform(0, min(0.5, delay * 0.2))
+    sleep_for = round(delay + jitter, 2)
+    time.sleep(sleep_for)
+    return sleep_for
+
+
+def _is_retryable_network_error(error: Exception) -> bool:
+    error_str = str(error)
+    return any(keyword in error_str for keyword in RETRYABLE_NETWORK_KEYWORDS)
 
 
 def get_gmail_service():
@@ -42,13 +61,30 @@ def get_gmail_service():
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            logger.info("Refreshed expired credentials")
+            for attempt in range(GMAIL_AUTH_MAX_RETRIES):
+                try:
+                    creds.refresh(Request())
+                    logger.info("Refreshed expired credentials")
+                    break
+                except Exception as e:
+                    if attempt < GMAIL_AUTH_MAX_RETRIES - 1 and _is_retryable_network_error(e):
+                        wait_time = _backoff_sleep(attempt)
+                        logger.warning(
+                            f"Failed to refresh Gmail credentials on attempt {attempt + 1}/{GMAIL_AUTH_MAX_RETRIES}: {e}. "
+                            f"Retrying in {wait_time}s..."
+                        )
+                        continue
+                    logger.error(f"Failed to refresh Gmail credentials after {attempt + 1} attempts: {e}")
+                    return None
         else:
             logger.error("[!] Credentials not valid or missing.")
             return None
 
-    return build("gmail", "v1", credentials=creds)
+    try:
+        return build("gmail", "v1", credentials=creds)
+    except Exception as e:
+        logger.error(f"Failed to initialize Gmail service: {e}")
+        return None
 
 
 def send_reply(
@@ -116,9 +152,7 @@ def send_reply(
 
         raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
-        # Retry logic for sending
-        max_retries = 3
-        for attempt in range(max_retries):
+        for attempt in range(GMAIL_SEND_MAX_RETRIES):
             try:
                 service.users().messages().send(userId="me", body={"raw": raw_message, "threadId": thread_id}).execute()
                 logger.info(f"Reply sent to {to} in thread {thread_id} with {len(attachment_paths) if attachment_paths else 0} attachments")
@@ -131,13 +165,13 @@ def send_reply(
                     return
 
                 # Check for SSL/network errors - retry with backoff
-                if any(keyword in error_str for keyword in ["SSL", "EOF", "Connection", "Timeout"]):
-                    if attempt < max_retries - 1:
-                        wait_time = 2**attempt
+                if _is_retryable_network_error(e):
+                    if attempt < GMAIL_SEND_MAX_RETRIES - 1:
+                        wait_time = _backoff_sleep(attempt)
                         logger.warning(
-                            f"Network/SSL error on attempt {attempt + 1}/{max_retries}: {e}. Retrying in {wait_time}s..."
+                            f"Network/SSL error on attempt {attempt + 1}/{GMAIL_SEND_MAX_RETRIES}: {e}. "
+                            f"Retrying in {wait_time}s..."
                         )
-                        time.sleep(wait_time)
                         continue
 
                 # Other errors or final retry failed

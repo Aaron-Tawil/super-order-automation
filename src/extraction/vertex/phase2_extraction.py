@@ -19,6 +19,14 @@ from .types import InvoiceExtractionResult
 logger = get_logger(__name__)
 
 
+def _truncate_for_log(text: str, limit: int = 2000) -> str:
+    """Trim verbose model output to a safe logging size."""
+    if not text:
+        return ""
+    text = str(text).strip()
+    return text if len(text) <= limit else f"{text[:limit]}...[truncated]"
+
+
 def extract_invoice_data(
     file_path: str,
     mime_type: str = None,
@@ -129,6 +137,9 @@ def extract_invoice_data(
         raw_json = raw_json.replace("```json", "").replace("```", "").strip()
 
         logger.info(f"{trace_context}✅ Phase 2 Finished (Model={model_name}). JSON received.")
+        logger.debug(
+            f"{trace_context}Raw Phase 2 response preview (attempt {retry_count}): {_truncate_for_log(raw_json, 800)}"
+        )
 
         parsed_json = {}
         try:
@@ -145,7 +156,17 @@ def extract_invoice_data(
                 },
             )
         except json.JSONDecodeError:
-            logger.error(f"❌ AI returned invalid JSON: {raw_json[:200]}...")
+            logger.error(
+                "❌ AI returned invalid JSON",
+                extra={
+                    "json_fields": {
+                        "event_type": "ai_invalid_json",
+                        "attempt": retry_count,
+                        "model": model_name,
+                        "raw_text_preview": _truncate_for_log(raw_json),
+                    }
+                },
+            )
             parsed_json = {"error": "Invalid JSON", "raw_text": raw_json}
 
         response_metadata = {}
@@ -163,7 +184,18 @@ def extract_invoice_data(
             multi_order = MultiOrderResponse.model_validate_json(raw_json)
             return multi_order.orders, cost, response_metadata, parsed_json
         except Exception as validation_err:
-            logger.error(f"❌ Pydantic validation failed: {validation_err}")
+            logger.error(
+                "❌ Pydantic validation failed",
+                extra={
+                    "json_fields": {
+                        "event_type": "ai_validation_failure",
+                        "attempt": retry_count,
+                        "model": model_name,
+                        "error": str(validation_err),
+                        "raw_text_preview": _truncate_for_log(raw_json),
+                    }
+                },
+            )
             if "error" not in parsed_json:
                 parsed_json["error"] = f"Validation failed: {str(validation_err)}"
             return [], cost, response_metadata, parsed_json

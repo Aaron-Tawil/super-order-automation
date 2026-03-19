@@ -39,8 +39,8 @@ def calculate_cost(model_name: str, usage_metadata: dict) -> float:
     if not usage_metadata:
         return 0.0
         
-    prompt_tokens = usage_metadata.get("prompt_token_count", 0)
-    response_tokens = usage_metadata.get("candidates_token_count", 0)
+    prompt_tokens = usage_metadata.get("prompt_token_count") or 0
+    response_tokens = usage_metadata.get("candidates_token_count") or 0
     
     # Normalize model name for matching (ignoring version suffixes like -001)
     model_base = model_name.lower()
