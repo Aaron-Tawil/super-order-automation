@@ -52,7 +52,7 @@ export default function ItemsPage() {
   return (
     <AppShell>
       <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
-        <div className="rounded-[2rem] border border-white/70 bg-white/90 p-6 shadow-panel">
+        <div className="rounded-4xl border border-white/70 bg-white/90 p-6 shadow-panel">
           <h2 className="text-2xl font-semibold text-slate-900">חיפוש ועריכת פריטים</h2>
           <input
             className="mt-5 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
@@ -84,7 +84,7 @@ export default function ItemsPage() {
         </div>
 
         <div className="space-y-6">
-          <div className="rounded-[2rem] border border-white/70 bg-white/90 p-6 shadow-panel">
+          <div className="rounded-4xl border border-white/70 bg-white/90 p-6 shadow-panel">
             <h3 className="text-xl font-semibold text-slate-900">הוסף פריט</h3>
             <div className="mt-5 grid gap-3">
               {[
@@ -112,7 +112,7 @@ export default function ItemsPage() {
             </div>
           </div>
 
-          <div className="rounded-[2rem] border border-white/70 bg-white/90 p-6 shadow-panel">
+          <div className="rounded-4xl border border-white/70 bg-white/90 p-6 shadow-panel">
             <h3 className="text-xl font-semibold text-slate-900">מחיקת פריטים באצווה</h3>
             <textarea
               className="mt-5 min-h-28 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"

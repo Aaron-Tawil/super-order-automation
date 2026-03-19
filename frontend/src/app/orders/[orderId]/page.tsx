@@ -96,12 +96,12 @@ export default function OrderPage() {
           <MetricCard label="עלות עיבוד ₪" value={order.data.processing_cost_ils.toFixed(3)} />
         </div>
 
-        <div className="rounded-[2rem] border border-white/70 bg-white/90 p-5 shadow-panel dark:border-slate-800 dark:bg-slate-950/90">
+        <div className="rounded-4xl border border-white/70 bg-white/90 p-5 shadow-panel dark:border-slate-800 dark:bg-slate-950/90">
           <LoadingBar active={order.isFetching || toggleTest.isPending} />
         </div>
 
         <div className="grid gap-6 md:grid-cols-[2fr_1fr]">
-          <div className="rounded-[2rem] border border-white/70 bg-white/90 p-6 shadow-panel dark:border-slate-800 dark:bg-slate-950/90">
+          <div className="rounded-4xl border border-white/70 bg-white/90 p-6 shadow-panel dark:border-slate-800 dark:bg-slate-950/90">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-50">שורות פריטים</h2>
@@ -140,7 +140,7 @@ export default function OrderPage() {
           </div>
 
           <div className="space-y-4">
-            <div className="rounded-[2rem] border border-white/70 bg-white/90 p-5 shadow-panel dark:border-slate-800 dark:bg-slate-950/90">
+            <div className="rounded-4xl border border-white/70 bg-white/90 p-5 shadow-panel dark:border-slate-800 dark:bg-slate-950/90">
               <div className="text-sm text-slate-500 dark:text-slate-400">מטא-דאטה</div>
               <div className="mt-3 space-y-2 text-sm text-slate-700 dark:text-slate-200">
                 <div>שולח: {order.data.sender}</div>
@@ -159,7 +159,7 @@ export default function OrderPage() {
             </div>
 
             {order.data.warnings.length > 0 ? (
-              <div className="rounded-[2rem] border border-rose-200 bg-rose-50 p-5 shadow-panel dark:border-rose-900/50 dark:bg-rose-950/40">
+              <div className="rounded-4xl border border-rose-200 bg-rose-50 p-5 shadow-panel dark:border-rose-900/50 dark:bg-rose-950/40">
                 <div className="text-sm font-semibold text-rose-700 dark:text-rose-300">אזהרות</div>
                 <ul className="mt-3 space-y-2 text-sm text-rose-800 dark:text-rose-200">
                   {order.data.warnings.map((warning) => (
@@ -170,7 +170,7 @@ export default function OrderPage() {
             ) : null}
 
             {order.data.notes || order.data.math_reasoning || order.data.qty_reasoning ? (
-              <div className="rounded-[2rem] border border-slate-200 bg-slate-50 p-5 shadow-panel dark:border-slate-800 dark:bg-slate-900/70">
+              <div className="rounded-4xl border border-slate-200 bg-slate-50 p-5 shadow-panel dark:border-slate-800 dark:bg-slate-900/70">
                 <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">תובנות AI</div>
                 <div className="mt-3 space-y-3 text-sm text-slate-700 dark:text-slate-200">
                   {order.data.notes ? <p>{order.data.notes}</p> : null}
@@ -182,7 +182,7 @@ export default function OrderPage() {
           </div>
         </div>
 
-        <div className="rounded-[2rem] border border-white/70 bg-white/90 p-6 shadow-panel dark:border-slate-800 dark:bg-slate-950/90">
+        <div className="rounded-4xl border border-white/70 bg-white/90 p-6 shadow-panel dark:border-slate-800 dark:bg-slate-950/90">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <Sparkles className="size-5 text-slate-600 dark:text-slate-300" />

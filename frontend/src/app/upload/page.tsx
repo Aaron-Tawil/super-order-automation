@@ -25,7 +25,7 @@ export default function UploadPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-3xl rounded-[2rem] border border-white/70 bg-white/90 p-6 shadow-panel">
+      <div className="mx-auto max-w-3xl rounded-4xl border border-white/70 bg-white/90 p-6 shadow-panel">
         <h2 className="text-2xl font-semibold text-slate-900">העלאה ידנית</h2>
         <p className="mt-2 text-sm text-slate-600">העלה PDF או Excel, הרץ את צינור החילוץ החדש, ועבור ישר להזמנה שנשמרה.</p>
 

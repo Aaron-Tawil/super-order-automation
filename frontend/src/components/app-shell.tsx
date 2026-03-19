@@ -41,9 +41,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f8fafc,_#e2e8f0_60%,_#cbd5e1)] dark:bg-[radial-gradient(circle_at_top,_#1e293b,_#0f172a_58%,_#020617)]">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,#f8fafc,#e2e8f0_60%,#cbd5e1)] dark:bg-[radial-gradient(circle_at_top,#1e293b,#0f172a_58%,#020617)]">
       <div className="mx-auto max-w-7xl px-4 py-6 md:px-6">
-        <div className="mb-6 rounded-[2rem] border border-white/80 bg-white/85 p-4 shadow-panel backdrop-blur dark:border-slate-800 dark:bg-slate-950/85">
+        <div className="mb-6 rounded-4xl border border-white/80 bg-white/85 p-4 shadow-panel backdrop-blur-sm dark:border-slate-800 dark:bg-slate-950/85">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <div className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Order Console</div>

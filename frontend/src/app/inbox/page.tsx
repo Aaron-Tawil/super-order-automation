@@ -13,7 +13,7 @@ import { formatDateTime } from "@/lib/utils";
 
 function InboxSkeleton() {
   return (
-    <div className="overflow-hidden rounded-[2rem] border border-white/70 bg-white/90 shadow-panel dark:border-slate-800 dark:bg-slate-950/90">
+    <div className="overflow-hidden rounded-4xl border border-white/70 bg-white/90 shadow-panel dark:border-slate-800 dark:bg-slate-950/90">
       <div className="space-y-3 p-5">
         {Array.from({ length: 5 }).map((_, index) => (
           <div
@@ -96,10 +96,10 @@ export default function InboxPage() {
           <MetricCard label="ספק לא מזוהה" value={orders.data?.metrics.unknown_supplier ?? 0} />
         </div>
 
-        <div className="rounded-[2rem] border border-white/70 bg-white/85 p-5 shadow-panel backdrop-blur dark:border-slate-800 dark:bg-slate-950/85">
+        <div className="rounded-4xl border border-white/70 bg-white/85 p-5 shadow-panel backdrop-blur-sm dark:border-slate-800 dark:bg-slate-950/85">
           <div className="grid gap-3 md:grid-cols-[minmax(0,320px)_auto]">
             <select
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-hidden transition focus:border-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
               onChange={(event) => {
                 setSelectedSupplier(event.target.value);
                 setPage(1);
@@ -137,7 +137,7 @@ export default function InboxPage() {
         {!orders.data && orders.isLoading ? (
           <InboxSkeleton />
         ) : orders.data?.items.length ? (
-          <div className="overflow-hidden rounded-[2rem] border border-white/70 bg-white/90 shadow-panel dark:border-slate-800 dark:bg-slate-950/90">
+          <div className="overflow-hidden rounded-4xl border border-white/70 bg-white/90 shadow-panel dark:border-slate-800 dark:bg-slate-950/90">
             <div className="overflow-x-auto">
               <table className="min-w-full text-right">
                 <thead className="bg-slate-950 text-sm text-white dark:bg-slate-900 dark:text-slate-200">

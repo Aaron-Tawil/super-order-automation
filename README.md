@@ -1,6 +1,6 @@
 # Super Order Automation
 
-Super Order Automation is a Python 3.11 application for ingesting supplier emails, extracting structured order data from PDF and Excel attachments with Gemini, storing results in Firestore, and reviewing/exporting them through a Streamlit dashboard.
+Super Order Automation is a Python 3.11 application for ingesting supplier emails, extracting structured order data from PDF and Excel attachments with Gemini, storing results in Firestore, and reviewing/exporting them through a dashboard UI.
 
 ## What the Project Does
 
@@ -11,6 +11,7 @@ Super Order Automation is a Python 3.11 application for ingesting supplier email
 - Auto-registers newly discovered barcodes/items when possible.
 - Sends response emails with generated Excel outputs.
 - Provides a Streamlit dashboard for inbox review, manual upload, supplier management, item management, and order correction.
+- Provides a newer parallel Next.js frontend backed by a FastAPI web API.
 
 ## Current Architecture
 
@@ -19,11 +20,13 @@ Super Order Automation is a Python 3.11 application for ingesting supplier email
 3. `process-order-event` downloads the file, runs `src/core/pipeline.py`, writes order documents to Firestore, and generates export files.
 4. `renew_watch` is an HTTP Cloud Function intended for Cloud Scheduler to refresh the Gmail watch.
 5. The Streamlit dashboard in `src/dashboard/app.py` reads/writes Firestore data and supports direct `?order_id=` links.
+6. The newer web stack uses `src/web_api/app.py` as a FastAPI backend and `frontend/` as a separate Next.js frontend.
 
 ## Project Layout
 
 ```text
 super-order-automation/
+├── frontend/              # Next.js frontend for the newer dashboard experience
 ├── src/
 │   ├── cloud_functions/   # order_bot, process_order_event, renew_watch
 │   ├── core/              # pipeline orchestration, processing, validation, domain logic
@@ -46,6 +49,8 @@ super-order-automation/
 - Google Gemini via `google-genai`
 - Google Cloud Functions (2nd gen), Cloud Run, Pub/Sub, Cloud Storage, Firestore
 - Streamlit
+- FastAPI
+- Next.js 15 / React 19 / Tailwind CSS v4
 - Pydantic / pydantic-settings
 - `uv` for dependency management
 
@@ -68,6 +73,17 @@ Important variables currently used by the app and deployment scripts include:
 
 Use [`.env.example`](/mnt/c/Dev/super-order-automation/.env.example) as the starting point for local setup.
 
+## New Frontend
+
+The repository currently has two UI paths:
+
+- `src/dashboard/`: the existing Streamlit app
+- `frontend/`: the newer Next.js frontend
+
+The new frontend is a separate web app that talks to the FastAPI backend in `src/web_api/app.py`. It is intended to replace the Streamlit experience over time, starting with inbox review, item management, supplier management, uploads, and order detail flows.
+
+For local development, the Next.js app runs on `http://localhost:3000` and the FastAPI backend runs on `http://localhost:8000`.
+
 ## Local Development
 
 Install dependencies:
@@ -76,7 +92,32 @@ Install dependencies:
 uv sync --dev
 ```
 
-Run the dashboard locally:
+### Daily Local Workflow For The New Frontend
+
+Backend API:
+
+```bash
+uv run uvicorn src.web_api.app:app --reload --port 8000
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Then open:
+
+- `http://localhost:3000` for the Next.js frontend
+- `http://127.0.0.1:8000/health` to verify the FastAPI backend is up
+
+The frontend defaults to the local API base URL, so for normal local use you usually do not need extra frontend env vars.
+
+### Streamlit Dashboard
+
+If you need to run the existing Streamlit app instead:
 
 ```bash
 uv run streamlit run src/dashboard/app.py

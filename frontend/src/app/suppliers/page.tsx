@@ -54,7 +54,7 @@ export default function SuppliersPage() {
   return (
     <AppShell>
       <div className="grid gap-6 lg:grid-cols-[1.7fr_1fr]">
-        <div className="rounded-[2rem] border border-white/70 bg-white/90 p-6 shadow-panel">
+        <div className="rounded-4xl border border-white/70 bg-white/90 p-6 shadow-panel">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-2xl font-semibold text-slate-900">ניהול ספקים</h2>
             <input
@@ -111,7 +111,7 @@ export default function SuppliersPage() {
           </div>
         </div>
 
-        <div className="rounded-[2rem] border border-white/70 bg-white/90 p-6 shadow-panel">
+        <div className="rounded-4xl border border-white/70 bg-white/90 p-6 shadow-panel">
           <h3 className="text-xl font-semibold text-slate-900">הוסף ספק חדש</h3>
           <div className="mt-5 grid gap-3">
             {[

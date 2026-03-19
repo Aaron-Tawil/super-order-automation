@@ -21,7 +21,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-xl rounded-[2rem] border border-white/80 bg-white/90 p-8 shadow-panel backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
+      <div className="w-full max-w-xl rounded-4xl border border-white/80 bg-white/90 p-8 shadow-panel backdrop-blur-sm dark:border-slate-800 dark:bg-slate-950/90">
         <div className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Parallel Frontend</div>
         <h1 className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-50">מערכת אוטומציה להזמנות</h1>
         <p className="mt-4 text-slate-600 dark:text-slate-300">
