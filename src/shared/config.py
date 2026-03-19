@@ -50,6 +50,9 @@ class Settings(BaseSettings):
 
     # --- Web UI ---
     WEB_UI_URL: str = Field(validation_alias="WEB_UI_URL", default="http://localhost:8501")
+    NEXT_UI_URL: str = Field(validation_alias="NEXT_UI_URL", default="http://localhost:3000")
+    WEB_API_URL: str = Field(validation_alias="WEB_API_URL", default="http://localhost:8000")
+    API_SESSION_COOKIE_NAME: str = Field(validation_alias="API_SESSION_COOKIE_NAME", default="soa_web_api_session")
 
     # --- App Config ---
     LOG_LEVEL: str = Field(validation_alias="LOG_LEVEL", default="INFO")
@@ -130,6 +133,20 @@ class Settings(BaseSettings):
         if self.is_cloud_runtime:
             return self.WEB_UI_URL
         return "http://localhost:8501/"
+
+    @property
+    def get_next_ui_url(self) -> str:
+        """Returns the configured Next.js UI URL, with a sensible local default."""
+        if self.is_cloud_runtime:
+            return self.NEXT_UI_URL
+        return "http://localhost:3000/"
+
+    @property
+    def get_web_api_url(self) -> str:
+        """Returns the configured FastAPI URL, with a sensible local default."""
+        if self.is_cloud_runtime:
+            return self.WEB_API_URL
+        return "http://localhost:8000/"
 
     @property
     def is_cloud_runtime(self) -> bool:

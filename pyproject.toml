@@ -22,6 +22,7 @@ dependencies = [
     "urllib3<2.0.0", # Fix for SSLError in Cloud Functions
     "fastapi",
     "uvicorn",
+    "python-multipart",
     # String Matching
     "rapidfuzz>=3.0.0",
     # GCP Services

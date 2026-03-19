@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #eef2f6;
+  --foreground: #0f172a;
+  --card: rgba(255, 255, 255, 0.92);
+  --border: #d8e0ea;
+  --muted: #64748b;
+  --accent: #0f172a;
+  --success: #047857;
+  --danger: #be123c;
+  --font-sans: "IBM Plex Sans Hebrew";
+  color-scheme: light dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  direction: rtl;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2f6 52%, #dde5ee 100%);
+  color: var(--foreground);
+  font-family: var(--font-sans), sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #07111f;
+    --foreground: #dbe7f5;
+    --card: rgba(6, 16, 32, 0.88);
+    --border: #20314c;
+    --muted: #8aa0bf;
+    --accent: #7dd3fc;
+    --success: #34d399;
+    --danger: #fb7185;
+  }
+
+  body {
+    background: linear-gradient(180deg, #18253d 0%, #101b2f 42%, #091220 100%);
+  }
+}

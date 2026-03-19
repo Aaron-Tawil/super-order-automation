@@ -18,6 +18,9 @@ def mock_settings(monkeypatch):
     monkeypatch.setenv("GCS_BUCKET_NAME", "test-bucket")
     monkeypatch.setenv("GEMINI_API_KEY", "test-api-key")
     monkeypatch.setenv("WEB_UI_URL", "http://localhost:8501")
+    monkeypatch.setenv("NEXT_UI_URL", "http://localhost:3000")
+    monkeypatch.setenv("WEB_API_URL", "http://localhost:8000")
+    monkeypatch.setenv("API_SESSION_COOKIE_NAME", "soa_web_api_session")
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
 
 
