@@ -93,6 +93,7 @@ HEBREW_STRINGS = {
     "inbox_col_status": "סטטוס",
     "inbox_col_supplier": "ספק",
     "inbox_col_invoice": "מספר חשבונית",
+    "inbox_col_cost": "עלות",
     "inbox_col_filename": "קובץ",
     "inbox_col_sender": "שולח",
     "inbox_col_error": "שגיאה",

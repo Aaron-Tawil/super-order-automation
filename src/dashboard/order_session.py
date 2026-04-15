@@ -14,6 +14,7 @@ import tempfile
 import pandas as pd
 import streamlit as st
 
+from src.dashboard.timezone_utils import format_dashboard_dt
 from src.data.items_service import ItemsService
 from src.data.orders_service import OrdersService
 from src.data.supplier_service import SupplierService
@@ -123,12 +124,7 @@ def render_order_session() -> None:  # noqa: C901
     cost_ils = data.get("processing_cost_ils", 0.0) or 0.0
     invoice_number = str(data.get("invoice_number", "-") or "-").strip() or "-"
     created_at = data.get("created_at") or metadata.get("created_at")
-    if hasattr(created_at, "strftime"):
-        created_at_str = created_at.strftime("%Y-%m-%d %H:%M")
-    elif created_at:
-        created_at_str = str(created_at)[:16]
-    else:
-        created_at_str = "-"
+    created_at_str = format_dashboard_dt(created_at)
 
     # ------------------------------------------------------------------
     # Order header card — RTL-friendly: status (right) → invoice → sender → supplier (left)

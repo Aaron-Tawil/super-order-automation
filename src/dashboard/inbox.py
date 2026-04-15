@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pandas as pd
 import streamlit as st
 
+from src.dashboard.timezone_utils import format_dashboard_dt, get_dashboard_timezone, to_dashboard_time
 from src.data.orders_service import OrdersService
 from src.data.processing_events_service import ProcessingEventsService
 from src.data.supplier_service import SupplierService
@@ -23,10 +24,14 @@ def _normalize_status(raw_status: str | None) -> str:
     return status or "UNKNOWN"
 
 
-def _format_dt(value) -> str:
-    if isinstance(value, datetime):
-        return value.strftime("%Y-%m-%d %H:%M")
-    return "-"
+def _format_cost_ils(order: dict) -> float | None:
+    value = order.get("processing_cost_ils")
+    if value in (None, ""):
+        return None
+    try:
+        return round(float(value), 3)
+    except (TypeError, ValueError):
+        return None
 
 
 def _build_order_link(order: dict) -> str:
@@ -133,7 +138,7 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
         )
         selected_suppliers = {supplier_label_to_code[lbl] for lbl in selected_supplier_labels}
     with range_col:
-        today = datetime.now(UTC).date()
+        today = datetime.now(get_dashboard_timezone()).date()
         date_range = st.date_input(
             get_text("inbox_filter_date"),
             value=(today - timedelta(days=30), today),
@@ -157,8 +162,8 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
         order_status = _normalize_status(order.get("status"))
         order["display_status"] = order_status
         order_supplier = str(order.get("supplier_code", "UNKNOWN"))
-        created_at = order.get("created_at")
-        created_date = created_at.date() if isinstance(created_at, datetime) else None
+        created_at = to_dashboard_time(order.get("created_at"))
+        created_date = created_at.date() if created_at else None
 
         if not include_test and order["is_test"]:
             continue
@@ -204,16 +209,14 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
         rows.append(
             {
                 "select": False,
-                "created_at": _format_dt(order.get("created_at")),
+                "created_at": format_dashboard_dt(order.get("created_at")),
                 "status": order.get("display_status", "UNKNOWN"),
                 "supplier": f"{supplier_name} ({supplier_code})",
                 "invoice_number": order.get("invoice_number", "-"),
-                "filename": order.get("filename") or order.get("ui_metadata", {}).get("filename", "-"),
-                "sender": order.get("sender", "-"),
+                "cost_ils": _format_cost_ils(order),
                 "error": order.get("error", "-")
                 if order.get("record_type") in {"processing_event", "failed_order"}
                 else "-",
-                "email_status": order.get("response_email_status") or order.get("feedback_email_status") or "-",
                 "line_items": line_items_count,
                 "warnings": warnings_count,
                 "is_test": bool(order.get("is_test", False)),
@@ -235,10 +238,8 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
         "status",
         "supplier",
         "invoice_number",
-        "filename",
-        "sender",
+        "cost_ils",
         "error",
-        "email_status",
         "line_items",
         "warnings",
         "is_test",
@@ -256,10 +257,8 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
             "status",
             "supplier",
             "invoice_number",
-            "filename",
-            "sender",
+            "cost_ils",
             "error",
-            "email_status",
             "line_items",
             "warnings",
         ],
@@ -269,10 +268,8 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
             "status": st.column_config.TextColumn(get_text("inbox_col_status")),
             "supplier": st.column_config.TextColumn(get_text("inbox_col_supplier")),
             "invoice_number": st.column_config.TextColumn(get_text("inbox_col_invoice")),
-            "filename": st.column_config.TextColumn(get_text("inbox_col_filename")),
-            "sender": st.column_config.TextColumn(get_text("inbox_col_sender")),
+            "cost_ils": st.column_config.NumberColumn(get_text("inbox_col_cost"), format="%.3f ₪"),
             "error": st.column_config.TextColumn(get_text("inbox_col_error")),
-            "email_status": st.column_config.TextColumn(get_text("inbox_col_email_status")),
             "line_items": st.column_config.NumberColumn(get_text("inbox_col_line_items")),
             "warnings": st.column_config.NumberColumn(get_text("inbox_col_warnings")),
             "is_test": st.column_config.CheckboxColumn(get_text("inbox_col_is_test")),

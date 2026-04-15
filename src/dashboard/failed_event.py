@@ -8,6 +8,7 @@ import os
 
 import streamlit as st
 
+from src.dashboard.timezone_utils import format_dashboard_dt
 from src.data.processing_events_service import ProcessingEventsService
 from src.data.supplier_service import SupplierService
 from src.ingestion.gcs_writer import download_file_from_gcs
@@ -18,7 +19,7 @@ def _format_value(value) -> str:
     if value is None or value == "":
         return "-"
     if hasattr(value, "strftime"):
-        return value.strftime("%Y-%m-%d %H:%M")
+        return format_dashboard_dt(value)
     return str(value)
 
 
