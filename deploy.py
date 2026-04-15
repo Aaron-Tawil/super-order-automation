@@ -35,6 +35,9 @@ PROJECT_ID = None
 REGION = None
 FUNCTION_NAME = "order-bot"
 PROCESSING_FUNCTION_NAME = "process-order-event"
+EMAIL_OUTBOX_RETRY_FUNCTION_NAME = "retry-email-outbox"
+EMAIL_OUTBOX_RETRY_SCHEDULER_JOB = "retry-email-outbox"
+SCHEDULER_SERVICE_ACCOUNT_ENV = "SCHEDULER_SERVICE_ACCOUNT_EMAIL"
 PUBSUB_TOPIC = "gmail-incoming-orders"
 INGESTION_TOPIC = "order-ingestion-topic"
 SECRET_NAME = "super-order-gmail-token"
@@ -125,12 +128,7 @@ def initialize_deploy_config():
         print_error("Could not determine GCP project. Set GCP_PROJECT_ID in the environment or .env.")
         sys.exit(1)
 
-    region = (
-        os.getenv("GCP_REGION")
-        or env_vars.get("GCP_REGION")
-        or env_vars.get("GCP_LOCATION")
-        or "us-central1"
-    )
+    region = os.getenv("GCP_REGION") or env_vars.get("GCP_REGION") or env_vars.get("GCP_LOCATION") or "us-central1"
 
     PROJECT_ID = project_id
     REGION = region
@@ -197,8 +195,8 @@ def update_secret_manager():
 
         result = subprocess.run(
             (
-                f'gcloud secrets versions add {SECRET_NAME} '
-                f'--project={PROJECT_ID} '
+                f"gcloud secrets versions add {SECRET_NAME} "
+                f"--project={PROJECT_ID} "
                 f'--data-file="{temp_secret_path}" '
                 f"--quiet"
             ),
@@ -257,12 +255,7 @@ def cleanup_old_secret_versions(keep_count: int = 2):
     for version_path in old_versions:
         version_id = version_path.split("/")[-1]
         destroy_result = subprocess.run(
-            (
-                f"gcloud secrets versions destroy {version_id} "
-                f"--secret={SECRET_NAME} "
-                f"--project={PROJECT_ID} "
-                f"--quiet"
-            ),
+            (f"gcloud secrets versions destroy {version_id} --secret={SECRET_NAME} --project={PROJECT_ID} --quiet"),
             shell=True,
             capture_output=True,
             text=True,
@@ -292,24 +285,26 @@ def renew_gmail_watch():
     except Exception as e:
         print_warning(f"Gmail Watch renewal failed: {e}")
         print_info("This is non-critical, the existing watch may still be valid")
+
+
 def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_renew_watch: bool = False):
     """Deploy Cloud Functions."""
     print_step(4, 5, "Deploying Cloud Functions")
 
     # Load env vars
     env_vars = load_env_vars()
-    
+
     # Force Cloud Environment for structured logging
     env_vars["ENVIRONMENT"] = "cloud"
     # Force DEBUG level to ensure all logs appear (including detailed debug logs)
     env_vars["LOG_LEVEL"] = "DEBUG"
-    
+
     # Create temporary env vars file
     env_file_path = os.path.abspath("deploy_env.yaml")
     try:
         with open(env_file_path, "w", encoding="utf-8") as f:
             yaml.dump(env_vars, f)
-        
+
         print_info(f"Generated {env_file_path} for deployment")
 
         # 1. Deploy 'order-bot' (Ingestion Service)
@@ -329,7 +324,7 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
                 f"--memory=512Mi "
                 f"--timeout=60s "
                 f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest "
-                f"--env-vars-file=\"{env_file_path}\" "
+                f'--env-vars-file="{env_file_path}" '
                 f"--quiet"
             )
 
@@ -363,7 +358,7 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
                 f"--memory=1Gi "
                 f"--timeout=300s "
                 f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest "
-                f"--env-vars-file=\"{env_file_path}\" "
+                f'--env-vars-file="{env_file_path}" '
                 f"--quiet"
             )
 
@@ -378,7 +373,7 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
                 sys.exit(1)
             else:
                 print_success(f"{PROCESSING_FUNCTION_NAME} deployed")
-        
+
         # 3. Deploy 'renew-watch-orders' (Maintenance functionality)
         if skip_renew_watch:
             print_info("Skipping renew-watch-orders deployment (--skip-renew-watch)")
@@ -397,7 +392,7 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
                 f"--memory=512Mi "
                 f"--timeout=60s "
                 f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest "
-                f"--env-vars-file=\"{env_file_path}\" "
+                f'--env-vars-file="{env_file_path}" '
                 f"--quiet"
             )
 
@@ -412,10 +407,125 @@ def deploy_function(skip_bot: bool = False, skip_processor: bool = False, skip_r
             else:
                 print_success("renew-watch-orders deployed")
 
+        # 4. Deploy durable response-email retry function and scheduler.
+        print_info(f"Deploying {EMAIL_OUTBOX_RETRY_FUNCTION_NAME}...")
+        cmd_retry = (
+            f"gcloud functions deploy {EMAIL_OUTBOX_RETRY_FUNCTION_NAME} "
+            f"--gen2 "
+            f"--runtime=python311 "
+            f"--region={REGION} "
+            f"--source=. "
+            f"--entry-point=retry_email_outbox "
+            f"--trigger-http "
+            f"--no-allow-unauthenticated "
+            f"--project={PROJECT_ID} "
+            f"--memory=512Mi "
+            f"--timeout=120s "
+            f"--set-secrets=GMAIL_TOKEN={SECRET_NAME}:latest "
+            f'--env-vars-file="{env_file_path}" '
+            f"--quiet"
+        )
+
+        result_retry = subprocess.run(cmd_retry, shell=True)
+        if result_retry.returncode != 0:
+            print_warning(f"Failed to deploy {EMAIL_OUTBOX_RETRY_FUNCTION_NAME}")
+        else:
+            print_success(f"{EMAIL_OUTBOX_RETRY_FUNCTION_NAME} deployed")
+            grant_email_outbox_retry_invoker()
+            ensure_email_outbox_retry_scheduler()
+
     finally:
         # Cleanup env file
         if os.path.exists(env_file_path):
             os.remove(env_file_path)
+
+
+def get_scheduler_service_account() -> str | None:
+    """Return the service account Cloud Scheduler should use to invoke private HTTP functions."""
+    configured = os.getenv(SCHEDULER_SERVICE_ACCOUNT_ENV) or load_env_vars().get(SCHEDULER_SERVICE_ACCOUNT_ENV)
+    if configured:
+        return configured
+
+    project_number = run_command(
+        f'gcloud projects describe {PROJECT_ID} --format="value(projectNumber)"',
+        capture=True,
+        check=False,
+    )
+    if not project_number:
+        print_warning(
+            f"Could not determine project number. Set {SCHEDULER_SERVICE_ACCOUNT_ENV} to configure scheduler auth."
+        )
+        return None
+    return f"{project_number.strip()}-compute@developer.gserviceaccount.com"
+
+
+def grant_email_outbox_retry_invoker():
+    """Allow the scheduler service account to invoke the private retry function."""
+    scheduler_sa = get_scheduler_service_account()
+    if not scheduler_sa:
+        return
+
+    cmd = (
+        f"gcloud run services add-iam-policy-binding {EMAIL_OUTBOX_RETRY_FUNCTION_NAME} "
+        f"--region={REGION} "
+        f"--member=serviceAccount:{scheduler_sa} "
+        f"--role=roles/run.invoker "
+        f"--project={PROJECT_ID} "
+        f"--quiet"
+    )
+    result = subprocess.run(cmd, shell=True)
+    if result.returncode == 0:
+        print_success(f"Granted scheduler invoker access to {scheduler_sa}")
+    else:
+        print_warning(f"Failed to grant scheduler invoker access to {scheduler_sa}")
+
+
+def ensure_email_outbox_retry_scheduler():
+    """Create or update the Cloud Scheduler job that retries queued response emails."""
+    retry_url = f"https://{REGION}-{PROJECT_ID}.cloudfunctions.net/{EMAIL_OUTBOX_RETRY_FUNCTION_NAME}"
+    scheduler_sa = get_scheduler_service_account()
+    if not scheduler_sa:
+        print_warning("Skipping email outbox retry scheduler because no scheduler service account was resolved")
+        return
+
+    describe_cmd = (
+        f"gcloud scheduler jobs describe {EMAIL_OUTBOX_RETRY_SCHEDULER_JOB} "
+        f"--location={REGION} --project={PROJECT_ID} --quiet"
+    )
+    exists = subprocess.run(describe_cmd, shell=True, capture_output=True, text=True).returncode == 0
+
+    if exists:
+        cmd = (
+            f"gcloud scheduler jobs update http {EMAIL_OUTBOX_RETRY_SCHEDULER_JOB} "
+            f"--location={REGION} "
+            f'--schedule="*/15 * * * *" '
+            f'--uri="{retry_url}" '
+            f"--http-method=GET "
+            f"--oidc-service-account-email={scheduler_sa} "
+            f'--oidc-token-audience="{retry_url}" '
+            f"--time-zone=Etc/UTC "
+            f"--project={PROJECT_ID} "
+            f"--quiet"
+        )
+    else:
+        cmd = (
+            f"gcloud scheduler jobs create http {EMAIL_OUTBOX_RETRY_SCHEDULER_JOB} "
+            f"--location={REGION} "
+            f'--schedule="*/15 * * * *" '
+            f'--uri="{retry_url}" '
+            f"--http-method=GET "
+            f"--oidc-service-account-email={scheduler_sa} "
+            f'--oidc-token-audience="{retry_url}" '
+            f"--time-zone=Etc/UTC "
+            f"--project={PROJECT_ID} "
+            f"--quiet"
+        )
+
+    result = subprocess.run(cmd, shell=True)
+    if result.returncode == 0:
+        print_success("Email outbox retry scheduler configured")
+    else:
+        print_warning("Failed to configure email outbox retry scheduler")
 
 
 def verify_deployment():
@@ -456,9 +566,11 @@ def check_pubsub_topics():
     """Ensure required Pub/Sub topics exist."""
     print_step(3.5, 5, "Checking Pub/Sub topics")
     topics = [PUBSUB_TOPIC, INGESTION_TOPIC]
-    
-    existing_topics_out = run_command(f'gcloud pubsub topics list --project={PROJECT_ID} --format="value(name)"', capture=True)
-    existing_topics = [t.split('/')[-1] for t in existing_topics_out.split('\n')] if existing_topics_out else []
+
+    existing_topics_out = run_command(
+        f'gcloud pubsub topics list --project={PROJECT_ID} --format="value(name)"', capture=True
+    )
+    existing_topics = [t.split("/")[-1] for t in existing_topics_out.split("\n")] if existing_topics_out else []
 
     for topic in topics:
         if topic not in existing_topics:
@@ -468,13 +580,16 @@ def check_pubsub_topics():
         else:
             print_info(f"Topic '{topic}' already exists")
 
+
 def main():
     parser = argparse.ArgumentParser(description="Deploy Super Order Automation to GCP")
     parser.add_argument("--skip-secret", action="store_true", help="Skip Secret Manager update")
     parser.add_argument("--skip-watch", action="store_true", help="Skip Gmail Watch renewal (local)")
     parser.add_argument("--skip-renew-watch", action="store_true", help="Skip deploying renew-watch-orders function")
     parser.add_argument("--skip-bot", action="store_true", help="Skip deploying ingestion function (order-bot)")
-    parser.add_argument("--skip-processor", action="store_true", help="Skip deploying processing function (process-order-event)")
+    parser.add_argument(
+        "--skip-processor", action="store_true", help="Skip deploying processing function (process-order-event)"
+    )
     args = parser.parse_args()
 
     print_header("Super Order Automation - Deployment")
@@ -495,11 +610,7 @@ def main():
         print_step(3, 5, "Skipping Gmail Watch renewal (--skip-watch)")
 
     check_pubsub_topics()
-    deploy_function(
-        skip_bot=args.skip_bot, 
-        skip_processor=args.skip_processor, 
-        skip_renew_watch=args.skip_renew_watch
-    )
+    deploy_function(skip_bot=args.skip_bot, skip_processor=args.skip_processor, skip_renew_watch=args.skip_renew_watch)
     verify_deployment()
     print_summary()
 

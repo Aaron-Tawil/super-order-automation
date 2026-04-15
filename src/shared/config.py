@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     FIRESTORE_ORDERS_COLLECTION: str = "orders"
     FIRESTORE_SESSIONS_COLLECTION: str = "sessions"
     FIRESTORE_PROCESSING_COLLECTION: str = "processing_events"
+    FIRESTORE_EMAIL_OUTBOX_COLLECTION: str = "email_outbox"
     SESSION_EXPIRY_HOURS: int = 24
 
     # --- AI / Gemini ---
@@ -76,7 +77,7 @@ class Settings(BaseSettings):
         base_list = constants.EXCLUDED_EMAILS
         if not self.EXCLUDED_EMAILS_STR:
             return base_list
-        
+
         env_list = [e.strip().lower() for e in self.EXCLUDED_EMAILS_STR.split(",") if e.strip()]
         # Union of both lists
         return list(set(base_list + env_list))
@@ -87,7 +88,7 @@ class Settings(BaseSettings):
         base_set = set(constants.BLACKLIST_IDS)
         if not self.BLACKLIST_IDS_STR:
             return base_set
-        
+
         env_set = {id.strip() for id in self.BLACKLIST_IDS_STR.split(",") if id.strip()}
         return base_set.union(env_set)
 
@@ -109,7 +110,7 @@ class Settings(BaseSettings):
         base_list = constants.BLACKLIST_NAMES
         if not self.BLACKLIST_NAMES_STR:
             return base_list
-        
+
         env_list = [n.strip() for n in self.BLACKLIST_NAMES_STR.split(",") if n.strip()]
         return list(set(base_list + env_list))
 
@@ -118,10 +119,10 @@ class Settings(BaseSettings):
         """Parsed list of allowed emails for OAuth login."""
         if not self.ALLOWED_EMAILS:
             return []
-            
+
         # Clean up potential leading/trailing quotes from the .env file parsing
         clean_str = self.ALLOWED_EMAILS.strip().strip("'").strip('"')
-        
+
         return [e.strip().lower() for e in clean_str.split(",") if e.strip()]
 
     @property
@@ -140,11 +141,11 @@ class Settings(BaseSettings):
             return True
 
         cloud_markers = (
-            "K_SERVICE",        # Cloud Run / Cloud Functions gen2
+            "K_SERVICE",  # Cloud Run / Cloud Functions gen2
             "FUNCTION_TARGET",  # Cloud Functions
-            "FUNCTION_NAME",    # Cloud Functions
-            "GAE_ENV",          # App Engine
-            "CLOUD_RUN_JOB",    # Cloud Run Jobs
+            "FUNCTION_NAME",  # Cloud Functions
+            "GAE_ENV",  # App Engine
+            "CLOUD_RUN_JOB",  # Cloud Run Jobs
         )
         return any(os.getenv(marker) for marker in cloud_markers)
 

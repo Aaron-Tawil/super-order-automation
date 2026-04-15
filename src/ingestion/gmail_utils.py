@@ -20,6 +20,20 @@ logger = get_logger(__name__)
 GMAIL_AUTH_MAX_RETRIES = 5
 GMAIL_SEND_MAX_RETRIES = 5
 RETRYABLE_NETWORK_KEYWORDS = ("SSL", "EOF", "Connection", "Timeout", "temporarily unavailable", "reset by peer")
+RETRYABLE_GMAIL_KEYWORDS = (
+    "429",
+    "500",
+    "502",
+    "503",
+    "504",
+    "backendError",
+    "internalError",
+    "rateLimitExceeded",
+    "userRateLimitExceeded",
+)
+SEND_REPLY_STATUS_SENT = "SENT"
+SEND_REPLY_STATUS_RETRYABLE_FAILED = "RETRYABLE_FAILED"
+SEND_REPLY_STATUS_PERMANENT_FAILED = "PERMANENT_FAILED"
 
 
 def _backoff_sleep(attempt: int, base_delay: float = 1.0, max_delay: float = 30.0) -> float:
@@ -34,6 +48,11 @@ def _backoff_sleep(attempt: int, base_delay: float = 1.0, max_delay: float = 30.
 def _is_retryable_network_error(error: Exception) -> bool:
     error_str = str(error)
     return any(keyword in error_str for keyword in RETRYABLE_NETWORK_KEYWORDS)
+
+
+def _is_retryable_send_error(error: Exception) -> bool:
+    error_str = str(error)
+    return _is_retryable_network_error(error) or any(keyword in error_str for keyword in RETRYABLE_GMAIL_KEYWORDS)
 
 
 def get_gmail_service():
@@ -97,12 +116,40 @@ def send_reply(
     attachment_paths=None,
     attachment_names=None,
     is_html=False,
-):
+) -> bool:
+    """Sends a reply to the original email thread and returns True on success."""
+    status, _error = send_reply_with_status(
+        service,
+        thread_id,
+        msg_id_header,
+        to,
+        subject,
+        body_text,
+        attachment_paths=attachment_paths,
+        attachment_names=attachment_names,
+        is_html=is_html,
+    )
+    return status == SEND_REPLY_STATUS_SENT
+
+
+def send_reply_with_status(
+    service,
+    thread_id,
+    msg_id_header,
+    to,
+    subject,
+    body_text,
+    attachment_paths=None,
+    attachment_names=None,
+    is_html=False,
+) -> tuple[str, str | None]:
     """
     Sends a reply to the original email thread.
     attachment_paths: List of file paths to attach.
     attachment_names: dict mapping attachment_path -> desired_filename (optional)
     is_html: If True, sends as text/html, otherwise text/plain.
+    Returns a typed status so durable retry callers can distinguish transient
+    Gmail failures from permanent issues such as a deleted source thread.
     """
     try:
         message = MIMEMultipart()
@@ -135,14 +182,14 @@ def send_reply(
 
                     # Use custom name if provided, otherwise fallback to basename
                     display_name = (attachment_names or {}).get(attachment_path) or os.path.basename(attachment_path)
-                    
+
                     # Ensure extension has a dot if it's missing (failsafe)
                     if "." not in display_name and "_" in display_name:
-                         # Heuristic: if name is like "uuid_xlsx", fix it to "uuid.xlsx"
-                         for ext in ["xlsx", "pdf", "xls", "csv"]:
-                             if display_name.endswith(f"_{ext}"):
-                                 display_name = display_name[:-len(ext)-1] + f".{ext}"
-                                 break
+                        # Heuristic: if name is like "uuid_xlsx", fix it to "uuid.xlsx"
+                        for ext in ["xlsx", "pdf", "xls", "csv"]:
+                            if display_name.endswith(f"_{ext}"):
+                                display_name = display_name[: -len(ext) - 1] + f".{ext}"
+                                break
 
                     part.add_header(
                         "Content-Disposition",
@@ -155,31 +202,36 @@ def send_reply(
         for attempt in range(GMAIL_SEND_MAX_RETRIES):
             try:
                 service.users().messages().send(userId="me", body={"raw": raw_message, "threadId": thread_id}).execute()
-                logger.info(f"Reply sent to {to} in thread {thread_id} with {len(attachment_paths) if attachment_paths else 0} attachments")
-                return  # Success!
+                logger.info(
+                    f"Reply sent to {to} in thread {thread_id} with {len(attachment_paths) if attachment_paths else 0} attachments"
+                )
+                return SEND_REPLY_STATUS_SENT, None
             except Exception as e:
                 error_str = str(e)
                 # Check for 404 (Thread not found) - don't retry
                 if "404" in error_str or "Requested entity was not found" in error_str:
                     logger.warning(f"Could not send reply: Original thread {thread_id} not found (404). Details: {e}")
-                    return
+                    return SEND_REPLY_STATUS_PERMANENT_FAILED, error_str
 
                 # Check for SSL/network errors - retry with backoff
-                if _is_retryable_network_error(e):
+                if _is_retryable_send_error(e):
                     if attempt < GMAIL_SEND_MAX_RETRIES - 1:
                         wait_time = _backoff_sleep(attempt)
                         logger.warning(
-                            f"Network/SSL error on attempt {attempt + 1}/{GMAIL_SEND_MAX_RETRIES}: {e}. "
+                            f"Retryable Gmail send error on attempt {attempt + 1}/{GMAIL_SEND_MAX_RETRIES}: {e}. "
                             f"Retrying in {wait_time}s..."
                         )
                         continue
+                    logger.error(f"Retryable Gmail send failed after {attempt + 1} attempts: {e}")
+                    return SEND_REPLY_STATUS_RETRYABLE_FAILED, error_str
 
                 # Other errors or final retry failed
                 logger.error(f"An error occurred sending reply: {e}")
-                return
+                return SEND_REPLY_STATUS_PERMANENT_FAILED, error_str
 
     except Exception as e:
         logger.error(f"Failed to build reply message: {e}")
+        return SEND_REPLY_STATUS_PERMANENT_FAILED, str(e)
 
 
 def get_email_body(payload: dict) -> str:

@@ -5,6 +5,7 @@ Orders service for dashboard listing and lookup.
 from datetime import UTC, datetime
 
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from src.shared.config import settings
 from src.shared.logger import get_logger
@@ -35,6 +36,8 @@ class OrdersService:
             data["order_id"] = doc.id
             # Legacy docs may miss this field; default to real order.
             data["is_test"] = bool(data.get("is_test", False))
+            if data.get("is_failed_placeholder"):
+                data["record_type"] = "failed_order"
             results.append(data)
         return results
 
@@ -52,6 +55,8 @@ class OrdersService:
         data = doc.to_dict() or {}
         data["order_id"] = doc.id
         data["is_test"] = bool(data.get("is_test", False))
+        if data.get("is_failed_placeholder"):
+            data["record_type"] = "failed_order"
 
         # Guard against corrupted timestamps in edge cases.
         created_at = data.get("created_at")
@@ -70,7 +75,7 @@ class OrdersService:
         if not session_id:
             return None
 
-        docs = self._collection.where("session_id", "==", str(session_id)).limit(1).stream()
+        docs = self._collection.where(filter=FieldFilter("session_id", "==", str(session_id))).limit(1).stream()
         for doc in docs:
             return doc.id
         return None
@@ -120,7 +125,7 @@ class OrdersService:
             doc_ref = self._collection.document(str(order_id))
             if not doc_ref.get().exists:
                 return False
-            
+
             new_order_data["updated_at"] = _utc_now()
             doc_ref.update(new_order_data)
             return True

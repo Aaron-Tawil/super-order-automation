@@ -8,9 +8,12 @@ import pandas as pd
 import streamlit as st
 
 from src.data.orders_service import OrdersService
+from src.data.processing_events_service import ProcessingEventsService
 from src.data.supplier_service import SupplierService
 from src.shared.config import settings
 from src.shared.translations import get_text
+
+MIN_DT = datetime.min.replace(tzinfo=UTC)
 
 
 def _normalize_status(raw_status: str | None) -> str:
@@ -28,12 +31,23 @@ def _format_dt(value) -> str:
 
 def _build_order_link(order: dict) -> str:
     base = settings.get_web_ui_url.rstrip("/")
+    if order.get("record_type") in {"processing_event", "failed_order"}:
+        return f"{base}/?failed_event_id={order.get('event_id', '')}"
     return f"{base}/?order_id={order.get('order_id', '')}"
 
 
 @st.cache_data(ttl=30)
 def _load_orders(limit: int = 500) -> list[dict]:
-    return OrdersService().list_orders(limit=limit)
+    orders = OrdersService().list_orders(limit=limit)
+    failed_events = ProcessingEventsService().list_failed_events(limit=limit)
+    failed_order_event_ids = {
+        str(order.get("event_id"))
+        for order in orders
+        if order.get("record_type") == "failed_order" and order.get("event_id")
+    }
+    failed_events = [event for event in failed_events if str(event.get("event_id")) not in failed_order_event_ids]
+    combined = [*orders, *failed_events]
+    return sorted(combined, key=lambda o: o.get("created_at") or o.get("updated_at") or MIN_DT, reverse=True)
 
 
 @st.cache_data(ttl=300)
@@ -57,6 +71,9 @@ def _matches_search(order: dict, search: str) -> bool:
         str(order.get("sender", "")),
         str(order.get("subject", "")),
         str(order.get("filename", "")),
+        str(order.get("error", "")),
+        str(order.get("stage", "")),
+        str(order.get("feedback_email_status", "")),
     ]
 
     line_items = order.get("line_items") or []
@@ -182,11 +199,7 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
             line_items_count = len(order.get("line_items", []) or [])
 
         supplier_code = order.get("supplier_code") or "UNKNOWN"
-        supplier_name = (
-            order.get("supplier_name")
-            or supplier_name_map.get(supplier_code)
-            or "-"
-        )
+        supplier_name = order.get("supplier_name") or supplier_name_map.get(supplier_code) or "-"
 
         rows.append(
             {
@@ -195,7 +208,12 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
                 "status": order.get("display_status", "UNKNOWN"),
                 "supplier": f"{supplier_name} ({supplier_code})",
                 "invoice_number": order.get("invoice_number", "-"),
+                "filename": order.get("filename") or order.get("ui_metadata", {}).get("filename", "-"),
                 "sender": order.get("sender", "-"),
+                "error": order.get("error", "-")
+                if order.get("record_type") in {"processing_event", "failed_order"}
+                else "-",
+                "email_status": order.get("response_email_status") or order.get("feedback_email_status") or "-",
                 "line_items": line_items_count,
                 "warnings": warnings_count,
                 "is_test": bool(order.get("is_test", False)),
@@ -208,10 +226,23 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
 
     # Pre-set the select column from session state so only the stored row is checked
     for i, row in enumerate(rows):
-        row["select"] = (i == prev_selected_idx)
+        row["select"] = i == prev_selected_idx
 
     df = pd.DataFrame(rows)
-    display_cols = ["select", "created_at", "status", "supplier", "invoice_number", "sender", "line_items", "warnings", "is_test"]
+    display_cols = [
+        "select",
+        "created_at",
+        "status",
+        "supplier",
+        "invoice_number",
+        "filename",
+        "sender",
+        "error",
+        "email_status",
+        "line_items",
+        "warnings",
+        "is_test",
+    ]
 
     # Dynamic key: changes when selection changes, which resets editor internal state
     editor_key = f"{widget_prefix}_orders_editor_{prev_selected_idx}"
@@ -220,14 +251,28 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
         width="stretch",
         hide_index=True,
         key=editor_key,
-        disabled=["created_at", "status", "supplier", "invoice_number", "sender", "line_items", "warnings"],
+        disabled=[
+            "created_at",
+            "status",
+            "supplier",
+            "invoice_number",
+            "filename",
+            "sender",
+            "error",
+            "email_status",
+            "line_items",
+            "warnings",
+        ],
         column_config={
             "select": st.column_config.CheckboxColumn(get_text("inbox_col_select")),
             "created_at": st.column_config.TextColumn(get_text("inbox_col_created_at")),
             "status": st.column_config.TextColumn(get_text("inbox_col_status")),
             "supplier": st.column_config.TextColumn(get_text("inbox_col_supplier")),
             "invoice_number": st.column_config.TextColumn(get_text("inbox_col_invoice")),
+            "filename": st.column_config.TextColumn(get_text("inbox_col_filename")),
             "sender": st.column_config.TextColumn(get_text("inbox_col_sender")),
+            "error": st.column_config.TextColumn(get_text("inbox_col_error")),
+            "email_status": st.column_config.TextColumn(get_text("inbox_col_email_status")),
             "line_items": st.column_config.NumberColumn(get_text("inbox_col_line_items")),
             "warnings": st.column_config.NumberColumn(get_text("inbox_col_warnings")),
             "is_test": st.column_config.CheckboxColumn(get_text("inbox_col_is_test")),
@@ -255,6 +300,8 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
         if idx >= len(filtered):
             continue
         order = filtered[idx]
+        if order.get("record_type") in {"processing_event", "failed_order"}:
+            continue
         order_id = str(order.get("order_id", "")).strip()
         if not order_id:
             continue

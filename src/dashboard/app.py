@@ -19,7 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.dashboard import auth, inbox, items_management, order_session, supplier_management  # noqa: E402
+from src.dashboard import auth, failed_event, inbox, items_management, order_session, supplier_management  # noqa: E402
 from src.shared.config import settings  # noqa: E402
 from src.shared.logger import get_logger  # noqa: E402
 from src.shared.translations import get_text  # noqa: E402
@@ -88,9 +88,13 @@ auth.require_login()
 
 # --- Session Loading Logic ---
 query_params = st.query_params
-order_id = query_params.get("order_id")
-if isinstance(order_id, list):
-    order_id = order_id[0] if order_id else None
+query_order_id = query_params.get("order_id")
+if isinstance(query_order_id, list):
+    query_order_id = query_order_id[0] if query_order_id else None
+
+query_failed_event_id = query_params.get("failed_event_id")
+if isinstance(query_failed_event_id, list):
+    query_failed_event_id = query_failed_event_id[0] if query_failed_event_id else None
 
 # Check for legacy session links
 legacy_session = query_params.get("session")
@@ -98,8 +102,22 @@ if legacy_session:
     st.error(get_text("session_expired") + " (Legacy link replaced by permanent order links)")
     st.stop()
 
-if not order_id:
-    order_id = st.session_state.get("active_order_id")
+if query_failed_event_id:
+    order_id = None
+    st.session_state.pop("active_order_id", None)
+else:
+    order_id = query_order_id or st.session_state.get("active_order_id")
+
+if query_order_id:
+    failed_event_id = None
+    st.session_state.pop("active_failed_event_id", None)
+elif query_failed_event_id:
+    failed_event_id = query_failed_event_id
+elif st.session_state.get("page") == "failed_event":
+    failed_event_id = st.session_state.get("active_failed_event_id")
+else:
+    failed_event_id = None
+    st.session_state.pop("active_failed_event_id", None)
 
 # Load from ?order_id= URL param (inbox link / direct link)
 if order_id and "extracted_data" not in st.session_state:
@@ -129,6 +147,10 @@ if order_id and "extracted_data" not in st.session_state:
     else:
         st.error(get_text("session_expired"))
 
+if failed_event_id:
+    st.session_state["active_failed_event_id"] = failed_event_id
+    st.session_state["page"] = "failed_event"
+
 # --- Navigation ---
 # Default to inbox (not dashboard) when no order is loaded
 if "page" not in st.session_state:
@@ -150,6 +172,11 @@ if current_page == "items":
 if current_page == "order_session":
     st.title(get_text("dashboard_title"))
     order_session.render_order_session()
+    st.stop()
+
+if current_page == "failed_event":
+    st.title(get_text("dashboard_title"))
+    failed_event.render_failed_event_detail(st.session_state.get("active_failed_event_id"))
     st.stop()
 
 if current_page == "inbox":

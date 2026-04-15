@@ -66,6 +66,7 @@ ROOT_COLLECTION_EXPECTED = {
     settings.FIRESTORE_ORDERS_COLLECTION,
     settings.FIRESTORE_SESSIONS_COLLECTION,
     settings.FIRESTORE_PROCESSING_COLLECTION,
+    settings.FIRESTORE_EMAIL_OUTBOX_COLLECTION,
     "items",
     "suppliers",
     "processed_messages",
@@ -75,9 +76,7 @@ ROOT_COLLECTION_EXPECTED = {
 # In this project these two collections are intentionally separate:
 # - processed_messages: ingestion-level idempotency (Gmail message_id key)
 # - processed_order_events: processor-level idempotency (event_id key)
-INTENTIONAL_COEXISTING_COLLECTIONS: set[frozenset[str]] = {
-    frozenset({"processed_messages", "processed_order_events"})
-}
+INTENTIONAL_COEXISTING_COLLECTIONS: set[frozenset[str]] = {frozenset({"processed_messages", "processed_order_events"})}
 
 
 def collection_path(col_ref: firestore.CollectionReference) -> str:
@@ -108,6 +107,27 @@ def build_expected_fields() -> dict[str, set[str]]:
         "orders.line_items[]": line_item_fields,
         "sessions": {"order", "metadata", "created_at", "expires_at"},
         "processing_events": {"event_id", "status", "stage", "updated_at", "created_at", "details"},
+        "email_outbox": {
+            "event_id",
+            "email_type",
+            "status",
+            "thread_id",
+            "message_id",
+            "to",
+            "subject",
+            "body",
+            "is_html",
+            "attachment_refs",
+            "order_ids",
+            "failed_order_id",
+            "attempt_count",
+            "max_attempts",
+            "next_attempt_at",
+            "created_at",
+            "updated_at",
+            "sent_at",
+            "last_error",
+        },
         "items": {"item_code", "name", "note"},
         "suppliers": {
             "name",
@@ -247,9 +267,7 @@ def build_markdown_report(report: dict[str, Any]) -> str:
     root = report["root_collections"]
     lines.append("## Root Collections")
     lines.append(f"- Found: `{', '.join(root['found']) if root['found'] else '(none)'}`")
-    lines.append(
-        f"- Unknown (not referenced in code): `{', '.join(root['unknown']) if root['unknown'] else '(none)'}`"
-    )
+    lines.append(f"- Unknown (not referenced in code): `{', '.join(root['unknown']) if root['unknown'] else '(none)'}`")
     lines.append(f"- Missing expected: `{', '.join(root['missing']) if root['missing'] else '(none)'}`")
     lines.append("")
 
@@ -269,8 +287,7 @@ def build_markdown_report(report: dict[str, Any]) -> str:
             lines.append(f"- Missing fields vs expected: `{', '.join(coll['missing_fields_vs_expected'])}`")
         if coll["line_item_extra_fields_vs_expected"]:
             lines.append(
-                "- Extra `orders.line_items[]` fields: "
-                f"`{', '.join(coll['line_item_extra_fields_vs_expected'])}`"
+                f"- Extra `orders.line_items[]` fields: `{', '.join(coll['line_item_extra_fields_vs_expected'])}`"
             )
 
         if coll["field_stats"]:

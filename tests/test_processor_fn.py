@@ -4,8 +4,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.cloud_functions.processor_fn import process_order_event
+from src.cloud_functions.processor_fn import _queue_and_attempt_response_email, process_order_event
+from src.core.events import EmailMetadata, OrderIngestedEvent
 from src.core.pipeline import PipelineResult
+from src.data.email_outbox_service import EMAIL_STATUS_FAILED_PERMANENT, EMAIL_STATUS_SENT
+from src.ingestion.email_outbox_sender import OUTBOX_SEND_SENT
 from src.shared.config import settings
 from src.shared.models import ExtractedOrder, LineItem
 
@@ -29,6 +32,12 @@ def mock_save_firestore():
 
 
 @pytest.fixture
+def mock_save_failed_order_firestore():
+    with patch("src.cloud_functions.processor_fn.save_failed_order_to_firestore") as mock:
+        yield mock
+
+
+@pytest.fixture
 def mock_init_client():
     with patch("src.cloud_functions.processor_fn.init_client") as mock:
         yield mock
@@ -46,6 +55,29 @@ def mock_idempotency_service():
         yield mock
 
 
+@pytest.fixture(autouse=True)
+def mock_email_outbox():
+    with (
+        patch("src.cloud_functions.processor_fn.EmailOutboxService") as mock_service_cls,
+        patch(
+            "src.cloud_functions.processor_fn.send_outbox_email",
+            return_value=(OUTBOX_SEND_SENT, None),
+        ) as mock_send,
+    ):
+        service = mock_service_cls.return_value
+        service.enqueue_email.return_value = "outbox-1"
+        service.get_email.return_value = {
+            "outbox_id": "outbox-1",
+            "attempt_count": 0,
+            "thread_id": "thread1",
+            "message_id": "msg1",
+            "to": "sender@example.com",
+            "subject": "Invoice",
+            "body": "body",
+        }
+        yield {"service": service, "send": mock_send}
+
+
 def create_cloud_event(data: dict):
     """Helper to create a mock CloudEvent."""
     json_data = json.dumps(data)
@@ -57,6 +89,67 @@ def create_cloud_event(data: dict):
     return mock_event
 
 
+def create_ingested_event(event_id: str = "evt-queued") -> OrderIngestedEvent:
+    return OrderIngestedEvent(
+        event_id=event_id,
+        gcs_uri="gs://bucket/invoice.pdf",
+        bucket_name="bucket",
+        blob_name="invoice.pdf",
+        filename="invoice.pdf",
+        mime_type="application/pdf",
+        email_metadata=EmailMetadata(
+            message_id="msg1",
+            thread_id="thread1",
+            sender="sender@example.com",
+            subject="Invoice",
+        ),
+    )
+
+
+def test_queue_and_attempt_response_email_skips_existing_sent_outbox(mock_email_outbox):
+    mock_email_outbox["service"].get_email.return_value = {
+        "outbox_id": "outbox-1",
+        "status": EMAIL_STATUS_SENT,
+        "attempt_count": 2,
+    }
+
+    status, attempts, outbox_id = _queue_and_attempt_response_email(
+        event_id="evt-queued",
+        email_type="SUCCESS",
+        event=create_ingested_event(),
+        body="hello",
+        is_html=False,
+        gmail_service=MagicMock(),
+    )
+
+    assert (status, attempts, outbox_id) == (EMAIL_STATUS_SENT, 2, "outbox-1")
+    mock_email_outbox["send"].assert_not_called()
+    mock_email_outbox["service"].mark_sent.assert_not_called()
+    mock_email_outbox["service"].mark_retry.assert_not_called()
+
+
+def test_queue_and_attempt_response_email_skips_existing_permanent_failure(mock_email_outbox):
+    mock_email_outbox["service"].get_email.return_value = {
+        "outbox_id": "outbox-1",
+        "status": EMAIL_STATUS_FAILED_PERMANENT,
+        "attempt_count": 3,
+    }
+
+    status, attempts, outbox_id = _queue_and_attempt_response_email(
+        event_id="evt-queued",
+        email_type="FAILURE",
+        event=create_ingested_event(),
+        body="hello",
+        is_html=False,
+        gmail_service=MagicMock(),
+    )
+
+    assert (status, attempts, outbox_id) == (EMAIL_STATUS_FAILED_PERMANENT, 3, "outbox-1")
+    mock_email_outbox["send"].assert_not_called()
+    mock_email_outbox["service"].mark_failed_permanent.assert_not_called()
+    mock_email_outbox["service"].mark_retry.assert_not_called()
+
+
 def test_process_order_event_success(
     mock_pipeline,
     mock_download,
@@ -64,6 +157,7 @@ def test_process_order_event_success(
     mock_init_client,
     mock_processing_status,
     mock_idempotency_service,
+    mock_email_outbox,
 ):
     # Setup Data
     event_payload = {
@@ -86,14 +180,13 @@ def test_process_order_event_success(
     mock_download.return_value = True
     mock_idempotency_service.return_value.check_and_lock_message.return_value = True
 
-    with patch("src.cloud_functions.processor_fn.get_gmail_service") as mock_gmail, \
-         patch("src.cloud_functions.processor_fn.send_reply") as mock_reply, \
-         patch("src.cloud_functions.processor_fn.generate_new_items_excel") as _mock_gen_excel:
-        
+    with (
+        patch("src.cloud_functions.processor_fn.get_gmail_service") as mock_gmail,
+    ):
         mock_gmail.return_value = MagicMock()
 
         pipeline_instance = mock_pipeline.return_value
-        
+
         # Use real object instead of mock to avoid Firestore serialization issues in tests
         mock_order = ExtractedOrder(
             invoice_number="INV-123",
@@ -101,14 +194,11 @@ def test_process_order_event_success(
             supplier_email=None,
             supplier_phone=None,
             warnings=[],
-            line_items=[LineItem(barcode="7290000000001", description="Test Item", quantity=1.0)]
+            line_items=[LineItem(barcode="7290000000001", description="Test Item", quantity=1.0)],
         )
-        
+
         mock_result = PipelineResult(
-            orders=[mock_order],
-            supplier_code="S123",
-            supplier_name="Test Supplier",
-            total_cost_usd=0.1
+            orders=[mock_order], supplier_code="S123", supplier_name="Test Supplier", total_cost_usd=0.1
         )
         pipeline_instance.run_pipeline.return_value = mock_result
 
@@ -127,7 +217,8 @@ def test_process_order_event_success(
     assert save_args.kwargs["metadata"]["subject"] == "Invoice 123"
     assert save_args.kwargs["metadata"]["filename"] == "invoice.pdf"
     assert mock_order.is_test is False
-    mock_reply.assert_called()
+    mock_email_outbox["service"].enqueue_email.assert_called()
+    mock_email_outbox["send"].assert_called()
     mock_idempotency_service.return_value.mark_message_completed.assert_called()
     assert mock_processing_status.call_count >= 2
 
@@ -139,6 +230,7 @@ def test_process_order_event_success_xlsx(
     mock_init_client,
     mock_processing_status,
     mock_idempotency_service,
+    mock_email_outbox,
 ):
     # Setup Data
     event_payload = {
@@ -161,28 +253,24 @@ def test_process_order_event_success_xlsx(
     mock_download.return_value = True
     mock_idempotency_service.return_value.check_and_lock_message.return_value = True
 
-    with patch("src.cloud_functions.processor_fn.get_gmail_service") as mock_gmail, \
-         patch("src.cloud_functions.processor_fn.send_reply") as mock_reply, \
-         patch("src.cloud_functions.processor_fn.generate_new_items_excel") as _mock_gen_excel:
-        
+    with (
+        patch("src.cloud_functions.processor_fn.get_gmail_service") as mock_gmail,
+    ):
         mock_gmail.return_value = MagicMock()
 
         pipeline_instance = mock_pipeline.return_value
-        
+
         mock_order = ExtractedOrder(
             invoice_number="INV-123",
             supplier_global_id=None,
             supplier_email=None,
             supplier_phone=None,
             warnings=[],
-            line_items=[LineItem(barcode="7290000000001", description="Test Item", quantity=1.0)]
+            line_items=[LineItem(barcode="7290000000001", description="Test Item", quantity=1.0)],
         )
-        
+
         mock_result = PipelineResult(
-            orders=[mock_order],
-            supplier_code="S123",
-            supplier_name="Test Supplier",
-            total_cost_usd=0.1
+            orders=[mock_order], supplier_code="S123", supplier_name="Test Supplier", total_cost_usd=0.1
         )
         pipeline_instance.run_pipeline.return_value = mock_result
 
@@ -201,7 +289,8 @@ def test_process_order_event_success_xlsx(
     assert save_args.kwargs["metadata"]["subject"] == "Invoice 123"
     assert save_args.kwargs["metadata"]["filename"] == "invoice.xlsx"
     assert mock_order.is_test is False
-    mock_reply.assert_called()
+    mock_email_outbox["service"].enqueue_email.assert_called()
+    mock_email_outbox["send"].assert_called()
     mock_idempotency_service.return_value.mark_message_completed.assert_called()
     assert mock_processing_status.call_count >= 2
 
@@ -213,6 +302,7 @@ def test_process_order_event_marks_test_sender_orders(
     mock_init_client,
     mock_processing_status,
     mock_idempotency_service,
+    mock_email_outbox,
     monkeypatch,
 ):
     monkeypatch.setattr(settings, "TEST_ORDER_EMAILS_STR", "test@example.com")
@@ -235,9 +325,9 @@ def test_process_order_event_marks_test_sender_orders(
     mock_download.return_value = True
     mock_idempotency_service.return_value.check_and_lock_message.return_value = True
 
-    with patch("src.cloud_functions.processor_fn.get_gmail_service") as mock_gmail, \
-         patch("src.cloud_functions.processor_fn.send_reply") as mock_reply, \
-         patch("src.cloud_functions.processor_fn.generate_new_items_excel") as _mock_gen_excel:
+    with (
+        patch("src.cloud_functions.processor_fn.get_gmail_service") as mock_gmail,
+    ):
         mock_gmail.return_value = MagicMock()
 
         pipeline_instance = mock_pipeline.return_value
@@ -263,7 +353,7 @@ def test_process_order_event_marks_test_sender_orders(
     assert save_args.kwargs["is_test"] is True
     assert save_args.kwargs["metadata"]["sender"] == "Test User <test@example.com>"
     assert mock_order.is_test is True
-    mock_reply.assert_called()
+    mock_email_outbox["service"].enqueue_email.assert_called()
 
 
 def test_process_order_event_download_fail(
@@ -284,8 +374,9 @@ def test_process_order_event_download_fail(
     mock_download.return_value = False  # Fail download
     mock_idempotency_service.return_value.check_and_lock_message.return_value = True
 
-    with patch("src.cloud_functions.processor_fn.get_gmail_service") as _mock_gmail, \
-         patch("src.cloud_functions.processor_fn.send_reply") as _mock_reply:
+    with (
+        patch("src.cloud_functions.processor_fn.get_gmail_service") as _mock_gmail,
+    ):
         process_order_event(cloud_event)
 
     mock_pipeline.return_value.run_pipeline.assert_not_called()
@@ -298,8 +389,10 @@ def test_process_order_event_no_orders(
     mock_pipeline,
     mock_download,
     mock_save_firestore,
+    mock_save_failed_order_firestore,
     mock_processing_status,
     mock_idempotency_service,
+    mock_email_outbox,
 ):
     event_payload = {
         "gcs_uri": "gs://bucket/empty.pdf",
@@ -307,30 +400,107 @@ def test_process_order_event_no_orders(
         "blob_name": "empty.pdf",
         "filename": "empty.pdf",
         "mime_type": "application/pdf",
+        "event_id": "event-no-orders",
         "email_metadata": {"message_id": "msg1", "thread_id": "t1", "sender": "s", "subject": "sub"},
     }
     cloud_event = create_cloud_event(event_payload)
     mock_download.return_value = True
     mock_idempotency_service.return_value.check_and_lock_message.return_value = True
-    
+
     mock_result = PipelineResult(orders=[], total_cost_usd=0.0)
     mock_pipeline.return_value.run_pipeline.return_value = mock_result
 
-    with patch("src.cloud_functions.processor_fn.get_gmail_service") as mock_gmail, \
-         patch("src.cloud_functions.processor_fn.send_reply") as mock_reply:
-        
+    with (
+        patch("src.cloud_functions.processor_fn.get_gmail_service") as mock_gmail,
+    ):
         mock_gmail.return_value = MagicMock()
-        
+
         process_order_event(cloud_event)
-        
-        mock_reply.assert_called_once()
+
         # "נכשל" is in "נכשל בחילוץ נתוני ההזמנה."
-        assert "נכשל" in mock_reply.call_args[0][5]
+        assert "נכשל" in mock_email_outbox["service"].enqueue_email.call_args.kwargs["body"]
 
     mock_save_firestore.assert_not_called()
+    mock_save_failed_order_firestore.assert_called_once()
+    failed_kwargs = mock_save_failed_order_firestore.call_args.kwargs
+    assert failed_kwargs["event_id"] == "event-no-orders"
+    assert failed_kwargs["source_file_uri"] == "gs://bucket/empty.pdf"
+    assert failed_kwargs["filename"] == "empty.pdf"
+    assert failed_kwargs["message_id"] == "msg1"
+    assert failed_kwargs["thread_id"] == "t1"
+    assert failed_kwargs["error"] == "No orders extracted"
+    assert failed_kwargs["feedback_email_status"] == "PENDING_RETRY"
+    mock_email_outbox["service"].mark_sent.assert_called_once_with("outbox-1", attempts=1)
+    final_status_call = mock_processing_status.call_args
+    assert final_status_call.kwargs["status"] == "FAILED"
+    assert final_status_call.kwargs["stage"] == "EXTRACTION"
+    details = final_status_call.kwargs["details"]
+    assert details["feedback_email_status"] == "SENT"
+    assert details["feedback_email_attempts"] == 1
+    assert details["filename"] == "empty.pdf"
+    assert details["gcs_uri"] == "gs://bucket/empty.pdf"
+    assert details["message_id"] == "msg1"
+    assert details["thread_id"] == "t1"
     kwargs = mock_idempotency_service.return_value.mark_message_completed.call_args.kwargs
     assert kwargs["success"] is False
     assert mock_processing_status.call_count >= 2
+
+
+def test_process_order_event_no_orders_queues_feedback_retry_when_gmail_unavailable(
+    mock_pipeline,
+    mock_download,
+    mock_save_firestore,
+    mock_save_failed_order_firestore,
+    mock_processing_status,
+    mock_idempotency_service,
+    mock_email_outbox,
+):
+    event_payload = {
+        "gcs_uri": "gs://bucket/empty.pdf",
+        "bucket_name": "bucket",
+        "blob_name": "empty.pdf",
+        "filename": "empty.pdf",
+        "mime_type": "application/pdf",
+        "event_id": "event-no-orders-retry",
+        "email_metadata": {
+            "message_id": "msg1",
+            "thread_id": "t1",
+            "sender": "sender@example.com",
+            "subject": "sub",
+        },
+    }
+    cloud_event = create_cloud_event(event_payload)
+    mock_download.return_value = True
+    mock_idempotency_service.return_value.check_and_lock_message.return_value = True
+    mock_pipeline.return_value.run_pipeline.return_value = PipelineResult(
+        orders=[],
+        supplier_code="S123",
+        supplier_name="Supplier 123",
+        total_cost_usd=0.0,
+    )
+
+    with (
+        patch("src.cloud_functions.processor_fn.get_gmail_service", return_value=None),
+    ):
+        process_order_event(cloud_event)
+
+    mock_email_outbox["send"].assert_not_called()
+    mock_email_outbox["service"].mark_waiting.assert_called_once()
+    mock_save_firestore.assert_not_called()
+    mock_save_failed_order_firestore.assert_called_once()
+    failed_kwargs = mock_save_failed_order_firestore.call_args.kwargs
+    assert failed_kwargs["feedback_email_status"] == "PENDING_RETRY"
+    assert failed_kwargs["feedback_email_attempts"] == 0
+    assert failed_kwargs["supplier_code"] == "S123"
+    final_status_call = mock_processing_status.call_args
+    details = final_status_call.kwargs["details"]
+    assert final_status_call.kwargs["status"] == "FAILED"
+    assert final_status_call.kwargs["stage"] == "EXTRACTION"
+    assert details["feedback_email_status"] == "PENDING_RETRY"
+    assert details["feedback_email_attempts"] == 0
+    assert details["sender"] == "sender@example.com"
+    assert details["subject"] == "sub"
+    assert details["supplier_code"] == "S123"
 
 
 def test_process_order_event_gmail_init_failure_does_not_abort_success(
@@ -339,6 +509,7 @@ def test_process_order_event_gmail_init_failure_does_not_abort_success(
     mock_save_firestore,
     mock_processing_status,
     mock_idempotency_service,
+    mock_email_outbox,
 ):
     event_payload = {
         "gcs_uri": "gs://bucket/invoice.pdf",
@@ -377,16 +548,15 @@ def test_process_order_event_gmail_init_failure_does_not_abort_success(
         added_barcodes=["7290000000001"],
     )
 
-    with patch("src.cloud_functions.processor_fn.get_gmail_service", side_effect=RuntimeError("ssl boom")), \
-         patch("src.cloud_functions.processor_fn.send_reply") as mock_reply, \
-         patch("src.cloud_functions.processor_fn.generate_excel_from_order") as mock_order_excel, \
-         patch("src.cloud_functions.processor_fn.generate_new_items_excel") as mock_new_items_excel, \
-         patch("src.cloud_functions.processor_fn.ItemsService") as mock_items_service:
+    with (
+        patch("src.cloud_functions.processor_fn.get_gmail_service", side_effect=RuntimeError("ssl boom")),
+        patch("src.cloud_functions.processor_fn.ItemsService") as mock_items_service,
+    ):
         process_order_event(cloud_event)
 
-    mock_reply.assert_not_called()
-    mock_order_excel.assert_called_once()
-    mock_new_items_excel.assert_called_once()
+    mock_email_outbox["service"].enqueue_email.assert_called()
+    mock_email_outbox["send"].assert_not_called()
+    mock_email_outbox["service"].mark_waiting.assert_called_once()
     mock_items_service.return_value.add_new_items_batch.assert_called_once_with(
         [{"barcode": "7290000000001", "name": "Test Item", "item_code": "7290000000001"}]
     )

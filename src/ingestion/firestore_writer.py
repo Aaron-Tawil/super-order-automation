@@ -59,9 +59,7 @@ def save_order_to_firestore(
 
         if added_items_barcodes:
             order_dict["ui_metadata"]["added_items_barcodes"] = [
-                str(barcode).strip()
-                for barcode in added_items_barcodes
-                if str(barcode).strip()
+                str(barcode).strip() for barcode in added_items_barcodes if str(barcode).strip()
             ]
 
         # Create a new document
@@ -73,6 +71,82 @@ def save_order_to_firestore(
 
     except Exception as e:
         logger.error(f"Failed to save to Firestore: {e}")
+        return None
+
+
+def save_failed_order_to_firestore(
+    *,
+    event_id: str,
+    source_file_uri: str,
+    filename: str,
+    sender: str,
+    subject: str,
+    message_id: str,
+    thread_id: str,
+    error: str,
+    stage: str = "EXTRACTION",
+    supplier_code: str | None = None,
+    supplier_name: str | None = None,
+    is_test: bool = False,
+    feedback_email_status: str | None = None,
+    feedback_email_attempts: int | None = None,
+) -> str | None:
+    """
+    Persist a failed extraction placeholder in the orders collection.
+    This keeps failed submissions visible in the same operational inbox as completed orders.
+    """
+    try:
+        db = firestore.Client(project=settings.PROJECT_ID)
+        collection_ref = db.collection(settings.FIRESTORE_ORDERS_COLLECTION)
+        now = _utc_now()
+        resolved_supplier_code = supplier_code or "UNKNOWN"
+
+        doc = {
+            "created_at": now,
+            "updated_at": now,
+            "gcs_uri": source_file_uri,
+            "status": "FAILED",
+            "stage": stage,
+            "event_id": str(event_id),
+            "is_failed_placeholder": True,
+            "is_test": bool(is_test),
+            "invoice_number": None,
+            "currency": "ILS",
+            "supplier_code": resolved_supplier_code,
+            "supplier_name": supplier_name,
+            "line_items": [],
+            "line_items_count": 0,
+            "warnings": [error] if error else [],
+            "warnings_count": 1 if error else 0,
+            "has_warnings": bool(error),
+            "is_unknown_supplier": str(resolved_supplier_code).upper() == "UNKNOWN",
+            "sender": sender,
+            "subject": subject,
+            "filename": filename,
+            "error": error,
+            "feedback_email_status": feedback_email_status,
+            "feedback_email_attempts": int(feedback_email_attempts or 0),
+            "ui_metadata": {
+                "sender": sender,
+                "subject": subject,
+                "filename": filename,
+                "source_file_uri": source_file_uri,
+                "message_id": message_id,
+                "thread_id": thread_id,
+                "event_id": str(event_id),
+                "error": error,
+                "stage": stage,
+                "feedback_email_status": feedback_email_status,
+                "feedback_email_attempts": int(feedback_email_attempts or 0),
+            },
+        }
+
+        doc_ref = collection_ref.document()
+        doc_ref.set(doc)
+        logger.info(f"Saved failed order placeholder for event {event_id} with ID: {doc_ref.id}")
+        return doc_ref.id
+    except Exception as e:
+        logger.error(f"Failed to save failed order placeholder: {e}")
         return None
 
 
