@@ -90,7 +90,7 @@ def collection_path(col_ref: firestore.CollectionReference) -> str:
     if raw_path is None:
         return col_ref.id
 
-    if isinstance(raw_path, (list, tuple)):
+    if isinstance(raw_path, list | tuple):
         return "/".join(str(part) for part in raw_path)
 
     return str(raw_path)

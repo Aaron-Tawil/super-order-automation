@@ -218,7 +218,7 @@ def _decode_payload(encoded: str | None) -> dict[str, str | int] | None:
 
     normalized: dict[str, str | int | dict[str, str]] = {}
     for key, value in payload.items():
-        if isinstance(value, (str, int)):
+        if isinstance(value, str | int):
             normalized[key] = value.strip() if isinstance(value, str) else value
         elif isinstance(value, dict):
             nested: dict[str, str] = {}
@@ -634,9 +634,9 @@ def is_user_allowed(email: str) -> bool:
     normalized_email = _normalize_email(email)
     if not normalized_email:
         return False
-        
+
     allowed_list = settings.allowed_emails
-    
+
     # Strictly deny if allowlist is empty in cloud, but allow warning locally
     if not allowed_list:
         if settings.is_cloud_runtime:
@@ -700,7 +700,7 @@ def require_login():
             if st.button(get_text("auth_btn_logout_try_another"), type="primary"):
                 logout()
             st.stop()
-            
+
         # Ensure session state is synced with cookie
         st.session_state["user_email"] = user_email
         user_name = user_name or st.session_state.get("user_name") or "User"
@@ -766,7 +766,7 @@ def require_login():
 
                             # Restore deep-link context after OAuth callback.
                             st.query_params.clear()
-                            
+
                             redirect_params = state_payload.get("redir")
                             if isinstance(redirect_params, dict):
                                 for k, v in redirect_params.items():
@@ -807,19 +807,21 @@ def require_login():
     # 3. Not logged in, not a callback -> Show login screen
     params = _get_all_params_except_oauth()
     display_login_screen(redirect_params=params)
-    st.stop() # Stop rendering the rest of the application
+    st.stop()  # Stop rendering the rest of the application
 
 
 def display_login_screen(session_id: str | None = None, redirect_params: dict[str, str] | None = None):
     """Renders the login UI."""
     # Load global CSS so RTL is applied even when stopped at login
     import os
+
     css_path = os.path.join(os.path.dirname(__file__), "styles.css")
     with open(css_path) as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-        
+
     # CSS for login container
-    st.markdown("""
+    st.markdown(
+        """
         <style>
         .login-container {
             max-width: 460px;
@@ -867,7 +869,9 @@ def display_login_screen(session_id: str | None = None, redirect_params: dict[st
             box-shadow: 0 0 3px 3px rgba(90, 90, 90, .3);
         }
         </style>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
     enabled_providers = _get_enabled_auth_providers()
     if not enabled_providers:
@@ -886,15 +890,11 @@ def display_login_screen(session_id: str | None = None, redirect_params: dict[st
     provider_buttons: list[str] = []
     for provider in enabled_providers:
         button_class = "oauth-google" if provider == GOOGLE_PROVIDER else "oauth-microsoft"
-        label = get_text("auth_btn_login_google") if provider == GOOGLE_PROVIDER else get_text("auth_btn_login_microsoft")
-        login_url = get_login_url(
-            session_id=session_id, 
-            provider=provider, 
-            redirect_params=redirect_params
+        label = (
+            get_text("auth_btn_login_google") if provider == GOOGLE_PROVIDER else get_text("auth_btn_login_microsoft")
         )
-        provider_buttons.append(
-            f'<a href="{login_url}" class="oauth-btn {button_class}" target="_self">{label}</a>'
-        )
+        login_url = get_login_url(session_id=session_id, provider=provider, redirect_params=redirect_params)
+        provider_buttons.append(f'<a href="{login_url}" class="oauth-btn {button_class}" target="_self">{label}</a>')
 
     provider_buttons_html = "\n".join(provider_buttons)
     st.markdown(
