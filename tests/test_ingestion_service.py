@@ -146,6 +146,55 @@ def test_process_unread_emails_async_success(mock_idempotency_cls, mock_gmail_se
 
 
 @patch("src.ingestion.ingestor.IdempotencyService")
+def test_process_unread_emails_async_normalizes_blank_subject(
+    mock_idempotency_cls,
+    mock_gmail_service,
+    mock_publisher,
+    mock_upload,
+):
+    settings.ALLOWED_EMAILS = ""
+
+    service_mock = MagicMock()
+    mock_gmail_service.return_value = service_mock
+
+    mock_idempotency = mock_idempotency_cls.return_value
+    mock_idempotency.check_and_lock_message.return_value = True
+    mock_upload.return_value = "gs://test-bucket/invoice.pdf"
+
+    service_mock.users.return_value.messages.return_value.list.return_value.execute.return_value = {
+        "messages": [{"id": "msg_123", "threadId": "thread_123"}]
+    }
+    service_mock.users.return_value.messages.return_value.get.return_value.execute.return_value = {
+        "id": "msg_123",
+        "threadId": "thread_123",
+        "labelIds": ["UNREAD"],
+        "payload": {
+            "headers": [
+                {"name": "Subject", "value": "   "},
+                {"name": "From", "value": "supplier@example.com"},
+            ],
+            "parts": [{"filename": "invoice.pdf", "body": {"attachmentId": "att_123"}, "mimeType": "application/pdf"}],
+        },
+    }
+    service_mock.users.return_value.messages.return_value.attachments.return_value.get.return_value.execute.return_value = {
+        "data": "bW9jayBkYXRh"
+    }
+    service_mock.users.return_value.getProfile.return_value.execute.return_value = {"emailAddress": "me@example.com"}
+
+    ingestor = IngestionService()
+    mock_future = MagicMock()
+    mock_future.result.return_value = "pub_msg_1"
+    ingestor.publisher.publish.return_value = mock_future
+
+    count = ingestor.process_unread_emails_async()
+
+    assert count == 1
+    pub_data = ingestor.publisher.publish.call_args.args[1]
+    event = OrderIngestedEvent.model_validate_json(pub_data.decode("utf-8"))
+    assert event.email_metadata.subject == "No Subject"
+
+
+@patch("src.ingestion.ingestor.IdempotencyService")
 def test_process_unread_emails_async_keeps_unread_on_publish_failure(
     mock_idempotency_cls,
     mock_gmail_service,

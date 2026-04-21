@@ -16,6 +16,7 @@ from src.ingestion.gmail_utils import (
     SEND_REPLY_STATUS_PERMANENT_FAILED,
     SEND_REPLY_STATUS_RETRYABLE_FAILED,
     SEND_REPLY_STATUS_SENT,
+    normalize_email_subject,
     send_reply_with_status,
 )
 from src.shared.logger import get_logger
@@ -84,7 +85,7 @@ def _prepare_attachment(ref: dict[str, Any]) -> tuple[str | None, str | None, st
 
 def send_outbox_email(email: dict, gmail_service) -> tuple[str, str | None]:
     """Send one queued email, rebuilding attachments from durable references."""
-    required = ("thread_id", "message_id", "to", "subject", "body")
+    required = ("thread_id", "message_id", "to", "body")
     missing = [field for field in required if not email.get(field)]
     if missing:
         return OUTBOX_SEND_PERMANENT_FAILED, f"Missing email fields: {', '.join(missing)}"
@@ -110,7 +111,7 @@ def send_outbox_email(email: dict, gmail_service) -> tuple[str, str | None]:
             email["thread_id"],
             email["message_id"],
             email["to"],
-            email["subject"],
+            normalize_email_subject(email.get("subject")),
             email["body"],
             attachment_paths=attachment_paths,
             attachment_names=attachment_names,

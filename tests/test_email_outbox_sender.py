@@ -79,3 +79,24 @@ def test_send_outbox_email_treats_missing_gmail_as_retryable():
 
     assert status == OUTBOX_SEND_RETRYABLE_FAILED
     assert error == "Gmail service unavailable"
+
+
+def test_send_outbox_email_normalizes_blank_subject():
+    email = {
+        "outbox_id": "outbox-1",
+        "thread_id": "thread-1",
+        "message_id": "msg-1",
+        "to": "sender@example.com",
+        "subject": "   ",
+        "body": "hello",
+    }
+
+    with patch(
+        "src.ingestion.email_outbox_sender.send_reply_with_status",
+        return_value=(OUTBOX_SEND_SENT, None),
+    ) as mock_send_reply:
+        status, error = send_outbox_email(email, MagicMock())
+
+    assert status == OUTBOX_SEND_SENT
+    assert error is None
+    assert mock_send_reply.call_args.args[4] == "No Subject"

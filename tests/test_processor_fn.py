@@ -8,7 +8,7 @@ from src.cloud_functions.processor_fn import _queue_and_attempt_response_email, 
 from src.core.events import EmailMetadata, OrderIngestedEvent
 from src.core.pipeline import PipelineResult
 from src.data.email_outbox_service import EMAIL_STATUS_FAILED_PERMANENT, EMAIL_STATUS_SENT
-from src.ingestion.email_outbox_sender import OUTBOX_SEND_SENT
+from src.ingestion.email_outbox_sender import OUTBOX_SEND_PERMANENT_FAILED, OUTBOX_SEND_SENT
 from src.shared.config import settings
 from src.shared.models import ExtractedOrder, LineItem
 
@@ -564,3 +564,67 @@ def test_process_order_event_gmail_init_failure_does_not_abort_success(
     kwargs = mock_idempotency_service.return_value.mark_message_completed.call_args.kwargs
     assert kwargs["success"] is True
     assert mock_processing_status.call_count >= 2
+
+
+def test_process_order_event_logs_permanent_response_email_failure(
+    mock_pipeline,
+    mock_download,
+    mock_save_firestore,
+    mock_processing_status,
+    mock_idempotency_service,
+    mock_email_outbox,
+):
+    event_payload = {
+        "gcs_uri": "gs://bucket/invoice.pdf",
+        "bucket_name": "bucket",
+        "blob_name": "invoice.pdf",
+        "filename": "invoice.pdf",
+        "mime_type": "application/pdf",
+        "event_id": "event-success-email-failed",
+        "email_metadata": {
+            "message_id": "msg1",
+            "thread_id": "thread1",
+            "sender": "sender@example.com",
+            "subject": "",
+            "received_at": "2023-01-01T12:00:00",
+        },
+    }
+    cloud_event = create_cloud_event(event_payload)
+    mock_download.return_value = True
+    mock_idempotency_service.return_value.check_and_lock_message.return_value = True
+    mock_save_firestore.return_value = "order-123"
+    mock_email_outbox["send"].return_value = (OUTBOX_SEND_PERMANENT_FAILED, "Missing email fields: subject")
+
+    mock_order = ExtractedOrder(
+        invoice_number="INV-123",
+        supplier_global_id=None,
+        supplier_email=None,
+        supplier_phone=None,
+        warnings=[],
+        line_items=[LineItem(barcode="7290000000001", description="Test Item", quantity=1.0)],
+    )
+    mock_pipeline.return_value.run_pipeline.return_value = PipelineResult(
+        orders=[mock_order],
+        supplier_code="S123",
+        supplier_name="Test Supplier",
+        total_cost_usd=0.1,
+    )
+
+    with (
+        patch("src.cloud_functions.processor_fn.get_gmail_service", return_value=MagicMock()),
+        patch("src.cloud_functions.processor_fn.logger") as mock_logger,
+    ):
+        process_order_event(cloud_event)
+
+    mock_email_outbox["service"].mark_failed_permanent.assert_called_once_with(
+        "outbox-1",
+        attempts=1,
+        last_error="Missing email fields: subject",
+    )
+    details = mock_processing_status.call_args.kwargs["details"]
+    assert details["response_email_status"] == "FAILED_PERMANENT"
+    assert details["subject"] == "No Subject"
+    assert any(
+        "response email failed permanently" in str(call.args[0]).lower() for call in mock_logger.error.call_args_list
+    )
+    assert not any("queued for retry" in str(call.args[0]).lower() for call in mock_logger.warning.call_args_list)

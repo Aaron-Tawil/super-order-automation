@@ -1,3 +1,5 @@
+import base64
+from email import message_from_bytes
 from unittest.mock import MagicMock, patch
 
 from src.ingestion.gmail_utils import (
@@ -5,6 +7,7 @@ from src.ingestion.gmail_utils import (
     SEND_REPLY_STATUS_RETRYABLE_FAILED,
     SEND_REPLY_STATUS_SENT,
     get_gmail_service,
+    normalize_email_subject,
     send_reply,
     send_reply_with_status,
 )
@@ -134,3 +137,32 @@ def test_send_reply_with_status_returns_sent_on_success():
 
     assert status == SEND_REPLY_STATUS_SENT
     assert error is None
+
+
+def test_normalize_email_subject_returns_fallback_for_blank_values():
+    assert normalize_email_subject("") == "No Subject"
+    assert normalize_email_subject("   ") == "No Subject"
+    assert normalize_email_subject(None) == "No Subject"
+    assert normalize_email_subject("Invoice 123") == "Invoice 123"
+
+
+def test_send_reply_with_status_uses_fallback_subject_for_blank_input():
+    service = MagicMock()
+    send_call = service.users.return_value.messages.return_value.send.return_value.execute
+    send_call.return_value = None
+
+    status, error = send_reply_with_status(
+        service,
+        thread_id="thread-1",
+        msg_id_header="msg-1",
+        to="user@example.com",
+        subject="   ",
+        body_text="hello",
+    )
+
+    raw_body = service.users.return_value.messages.return_value.send.call_args.kwargs["body"]["raw"]
+    mime_message = message_from_bytes(base64.urlsafe_b64decode(raw_body.encode()))
+
+    assert status == SEND_REPLY_STATUS_SENT
+    assert error is None
+    assert mime_message["subject"] == "Re: No Subject"

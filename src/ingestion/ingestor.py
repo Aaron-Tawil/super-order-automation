@@ -7,7 +7,7 @@ from google.cloud import pubsub_v1
 
 from src.core.events import EmailMetadata, OrderIngestedEvent
 from src.ingestion.gcs_writer import upload_to_gcs
-from src.ingestion.gmail_utils import get_email_body, get_gmail_service
+from src.ingestion.gmail_utils import get_email_body, get_gmail_service, normalize_email_subject
 from src.shared.config import settings
 from src.shared.idempotency_service import IdempotencyService
 from src.shared.logger import get_logger
@@ -88,7 +88,7 @@ class IngestionService:
                         continue
 
                     headers = msg["payload"]["headers"]
-                    subject = next((h["value"] for h in headers if h["name"] == "Subject"), "No Subject")
+                    subject = normalize_email_subject(next((h["value"] for h in headers if h["name"] == "Subject"), ""))
                     thread_id = msg["threadId"]
 
                     # Safety Filter: Replies
@@ -153,9 +153,9 @@ class IngestionService:
                             _, ext = os.path.splitext(raw_original.lower())
                             if not ext or not ext.startswith("."):
                                 ext = ".bin"
-                            
+
                             safe_filename = f"{uuid.uuid4().hex}{ext}"
-                            
+
                             fd, temp_path = tempfile.mkstemp(prefix="ingest_", suffix=ext)
                             with os.fdopen(fd, "wb") as f:
                                 f.write(att["data"])

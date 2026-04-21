@@ -19,6 +19,7 @@ logger = get_logger(__name__)
 
 GMAIL_AUTH_MAX_RETRIES = 5
 GMAIL_SEND_MAX_RETRIES = 5
+DEFAULT_EMAIL_SUBJECT = "No Subject"
 RETRYABLE_NETWORK_KEYWORDS = ("SSL", "EOF", "Connection", "Timeout", "temporarily unavailable", "reset by peer")
 RETRYABLE_GMAIL_KEYWORDS = (
     "429",
@@ -34,6 +35,12 @@ RETRYABLE_GMAIL_KEYWORDS = (
 SEND_REPLY_STATUS_SENT = "SENT"
 SEND_REPLY_STATUS_RETRYABLE_FAILED = "RETRYABLE_FAILED"
 SEND_REPLY_STATUS_PERMANENT_FAILED = "PERMANENT_FAILED"
+
+
+def normalize_email_subject(subject: str | None, default: str = DEFAULT_EMAIL_SUBJECT) -> str:
+    """Return a stable subject for storage and reply generation."""
+    normalized = str(subject or "").strip()
+    return normalized or default
 
 
 def _backoff_sleep(attempt: int, base_delay: float = 1.0, max_delay: float = 30.0) -> float:
@@ -152,9 +159,12 @@ def send_reply_with_status(
     Gmail failures from permanent issues such as a deleted source thread.
     """
     try:
+        normalized_subject = normalize_email_subject(subject)
         message = MIMEMultipart()
         message["to"] = to
-        message["subject"] = f"Re: {subject}" if not subject.lower().startswith("re:") else subject
+        message["subject"] = (
+            normalized_subject if normalized_subject.lower().startswith("re:") else f"Re: {normalized_subject}"
+        )
         message["In-Reply-To"] = msg_id_header
         message["References"] = msg_id_header
 

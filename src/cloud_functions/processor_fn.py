@@ -24,7 +24,7 @@ from src.ingestion.firestore_writer import (
     upsert_processing_event,
 )
 from src.ingestion.gcs_writer import download_file_from_gcs
-from src.ingestion.gmail_utils import get_gmail_service
+from src.ingestion.gmail_utils import get_gmail_service, normalize_email_subject
 from src.shared.config import settings
 from src.shared.idempotency_service import IdempotencyService
 from src.shared.logger import get_logger
@@ -71,7 +71,7 @@ def _event_details(
         "filename": event.filename,
         "gcs_uri": event.gcs_uri,
         "sender": event.email_metadata.sender,
-        "subject": event.email_metadata.subject,
+        "subject": normalize_email_subject(event.email_metadata.subject),
         "message_id": event.email_metadata.message_id,
         "thread_id": event.email_metadata.thread_id,
     }
@@ -110,7 +110,7 @@ def _queue_and_attempt_response_email(
         thread_id=event.email_metadata.thread_id,
         message_id=event.email_metadata.message_id,
         to=event.email_metadata.sender,
-        subject=event.email_metadata.subject,
+        subject=normalize_email_subject(event.email_metadata.subject),
         body=body,
         is_html=is_html,
         attachment_refs=attachment_refs or [],
@@ -199,6 +199,7 @@ def process_order_event(cloud_event: Any):
 
         event_id = event.event_id or event_id
         message_id = event.email_metadata.message_id
+        email_subject = normalize_email_subject(event.email_metadata.subject)
         ctx = _ctx(event_id, message_id)
         _track_event_status(
             event_id,
@@ -261,7 +262,7 @@ def process_order_event(cloud_event: Any):
         pipeline = ExtractionPipeline()
         email_meta = {
             "sender": event.email_metadata.sender,
-            "subject": event.email_metadata.subject,
+            "subject": email_subject,
             "body": event.email_metadata.body_snippet or "",
             "event_id": event_id,
             "message_id": message_id,
@@ -292,7 +293,7 @@ def process_order_event(cloud_event: Any):
                 source_file_uri=event.gcs_uri,
                 filename=event.filename,
                 sender=event.email_metadata.sender,
-                subject=event.email_metadata.subject,
+                subject=email_subject,
                 message_id=event.email_metadata.message_id,
                 thread_id=event.email_metadata.thread_id,
                 error="No orders extracted",
@@ -355,7 +356,7 @@ def process_order_event(cloud_event: Any):
         msg_body = f"""
             <div dir="rtl" style="font-family: Arial, sans-serif; text-align: right; line-height: 1.5;">
                 <p>{get_text("email_greeting")}</p>
-                <p>{get_text("email_processed_intro", subject=event.email_metadata.subject)}</p>
+                <p>{get_text("email_processed_intro", subject=email_subject)}</p>
             """
 
         for i, order in enumerate(orders):
@@ -371,7 +372,7 @@ def process_order_event(cloud_event: Any):
                 event.gcs_uri,
                 is_test=is_test_order,
                 metadata={
-                    "subject": event.email_metadata.subject,
+                    "subject": email_subject,
                     "sender": event.email_metadata.sender,
                     "filename": event.filename,
                     "phase1_reasoning": result.phase1_reasoning,
@@ -468,6 +469,8 @@ def process_order_event(cloud_event: Any):
         )
         if response_email_status == EMAIL_STATUS_SENT:
             logger.info(f"{ctx}✅ Pipeline complete. Email sent.")
+        elif response_email_status == EMAIL_STATUS_FAILED_PERMANENT:
+            logger.error(f"{ctx}Pipeline complete, but response email failed permanently.")
         else:
             logger.warning(f"{ctx}Pipeline complete. Email queued for retry ({response_email_status}).")
 
