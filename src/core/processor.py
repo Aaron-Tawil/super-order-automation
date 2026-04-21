@@ -87,7 +87,7 @@ class OrderProcessor:
 
             for i, order in enumerate(orders):
                 # Step 2: Post-Processing logic
-                logger.debug(f"Post-processing order {i+1}...")
+                logger.debug(f"Post-processing order {i + 1}...")
 
                 # 2a. Calculate net prices (if Trial 1)
                 if trial_version == 1:
@@ -133,7 +133,7 @@ class OrderProcessor:
                     order.warnings.append(msg)
                     critical_failure_found = True
                 else:
-                    logger.info(f"{trace_context}✅ Validation passed for order {i+1}. Diff: {diff_total:.2f}")
+                    logger.info(f"{trace_context}✅ Validation passed for order {i + 1}. Diff: {diff_total:.2f}")
 
                 # 3c. Bulk Quantity Validation (if document total exists)
                 is_valid_qty, calc_qty, diff_qty = self._validate_quantity(order, trial_version)
@@ -219,7 +219,7 @@ class OrderProcessor:
         if discount_amount > 0 and global_discount_pct == 0.0:
             # Calculate total raw value to find the ratio
             total_net_value = sum((item.final_net_price or 0.0) * (item.quantity or 0.0) for item in order.line_items)
-            
+
             if total_net_value > 0:
                 # E.g. 50 ILS discount on 500 ILS total = 10% reduction (ratio = 0.90)
                 discount_ratio = 1.0 - (discount_amount / total_net_value)
@@ -282,15 +282,15 @@ class OrderProcessor:
 
         # 1. Normalize VAT Rate
         vat_factor = 1 + VAT_RATE
-        
+
         # 2. Calculate base components
         total_line_net = sum((item.final_net_price or 0.0) * (item.quantity or 0.0) for item in order.line_items)
-        
+
         # Trial 2 Validation (LLM calculated the final net price itself, just verifying the pure sum)
         if trial_version == 2:
             # We trust the LLM's own self-verification flag for math via Sandbox execution
             is_valid = order.is_math_valid
-            
+
             # If the LLM didn't return a flag (e.g. failure to adhere to schema), fallback to basic math check
             if is_valid is None:
                 calc = total_line_net * vat_factor
@@ -312,10 +312,7 @@ class OrderProcessor:
         is_valid = diff <= VALIDATION_TOLERANCE
 
         if not is_valid:
-            logger.info(
-                f"DEBUG Validation (Trial 1): Net Sum={total_line_net:.2f}, "
-                f"VAT Factor={vat_factor:.2f}"
-            )
+            logger.info(f"DEBUG Validation (Trial 1): Net Sum={total_line_net:.2f}, VAT Factor={vat_factor:.2f}")
             logger.info(
                 f"DEBUG Validation (Trial 1): Document says {order.document_total_with_vat}, "
                 f"calc was {calculated_total:.2f}"
@@ -336,12 +333,12 @@ class OrderProcessor:
         # Trial 2 Validation (LLM verified quantity)
         if trial_version == 2:
             is_valid = order.is_qty_valid
-            
+
             if is_valid is None:
                 diff = abs(calculated_quantity - order.document_total_quantity)
                 is_valid = diff <= 0.1
                 return is_valid, calculated_quantity, diff
-                
+
             diff = abs(calculated_quantity - order.document_total_quantity)
             return is_valid, calculated_quantity, diff
 

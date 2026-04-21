@@ -53,6 +53,7 @@ def deploy():
     env_vars["LOG_LEVEL"] = "DEBUG"
 
     import yaml
+
     env_file_path = "env_vars.yaml"
     with open(env_file_path, "w") as f:
         yaml.dump(env_vars, f)
@@ -71,7 +72,7 @@ def deploy():
         f"--env-vars-file {env_file_path} "
     )
     run_command(deploy_cmd)
-    
+
     # Cleanup
     if os.path.exists(env_file_path):
         os.remove(env_file_path)

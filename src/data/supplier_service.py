@@ -134,17 +134,17 @@ class SupplierService:
             # Index by email (lowercase)
             email = data.get("email")
             additional_emails = data.get("additional_emails", [])
-            
+
             # Combine primary email and additional emails
             all_emails = []
             if email:
                 all_emails.append(str(email).strip().lower())
-            
+
             if additional_emails:
                 for ae in additional_emails:
                     if ae:
                         all_emails.append(str(ae).strip().lower())
-            
+
             for e in all_emails:
                 self._email_cache[e] = supplier_code
 
@@ -240,9 +240,7 @@ class SupplierService:
         # No match found
         # Intermediate probe misses are common during multi-step detection flows.
         # Keep this at DEBUG; final unresolved detection is logged at WARNING by callers.
-        logger.debug(
-            f"Could not match supplier - global_id: {global_id}, phone: {phone}, email: {email}, name: {name}"
-        )
+        logger.debug(f"Could not match supplier - global_id: {global_id}, phone: {phone}, email: {email}, name: {name}")
         return UNKNOWN_SUPPLIER
 
     def get_supplier(self, supplier_code: str) -> dict | None:
@@ -451,27 +449,29 @@ class SupplierService:
         """
         Add a new email to an existing supplier. Sets as primary if empty, else adds to additional_emails.
         Performs a GLOBAL check to ensure email isn't already assigned to another supplier.
-        
+
         Args:
             supplier_code: The supplier code to update
             email: The new email to add
-            
+
         Returns:
             Tuple[bool, bool]: (is_success, was_added_new)
         """
         if supplier_code == UNKNOWN_SUPPLIER:
             return False, False
-            
+
         # Normalize
         new_email = email.strip().lower()
-        
+
         # 1. Global Conflict Check
         self._ensure_cache_loaded()
-        
+
         if new_email in self._email_cache:
             existing_code = self._email_cache[new_email]
             if existing_code != supplier_code:
-                logger.warning(f"⚠️ Email {new_email} already assigned to DIFFERENT supplier {existing_code}. Cannot add to {supplier_code}.")
+                logger.warning(
+                    f"⚠️ Email {new_email} already assigned to DIFFERENT supplier {existing_code}. Cannot add to {supplier_code}."
+                )
                 return False, False
             else:
                 logger.info(f"Email {new_email} already linked to this supplier ({supplier_code}).")
@@ -488,15 +488,15 @@ class SupplierService:
             data = doc.to_dict()
             current_emails = data.get("additional_emails", [])
             primary_email = str(data.get("email", "")).strip().lower()
-            
+
             # Double check current_emails
             if new_email in [e.lower() for e in current_emails]:
                 return True, False
-                
+
             # Check if match primary email
             if new_email == primary_email:
                 return True, False
-                
+
             # Set as primary if empty
             if not primary_email:
                 doc_ref.update({"email": new_email, "updated_at": datetime.now()})
@@ -506,11 +506,11 @@ class SupplierService:
                 current_emails.append(new_email)
                 doc_ref.update({"additional_emails": current_emails, "updated_at": datetime.now()})
                 logger.info(f"Added additional email {new_email} to supplier {supplier_code}")
-            
+
             # Invalidate cache
             self.invalidate_cache()
             self._update_meta_timestamp()
-            
+
             return True, True
         except Exception as e:
             logger.error(f"Error adding email to supplier: {e}")
@@ -535,13 +535,15 @@ class SupplierService:
         cleaned_id = str(new_global_id).strip()
         if not cleaned_id:
             return False, False
-            
+
         # 1. Global Conflict Check
         self._ensure_cache_loaded()
         if cleaned_id in self._global_id_cache:
             existing_code = self._global_id_cache[cleaned_id]
             if existing_code != supplier_code:
-                logger.warning(f"⚠️ ID {cleaned_id} already assigned to DIFFERENT supplier {existing_code}. Cannot assign to {supplier_code}.")
+                logger.warning(
+                    f"⚠️ ID {cleaned_id} already assigned to DIFFERENT supplier {existing_code}. Cannot assign to {supplier_code}."
+                )
                 return False, False
             else:
                 logger.info(f"ID {cleaned_id} already matches this supplier ({supplier_code}).")
@@ -561,8 +563,10 @@ class SupplierService:
             if current_id:
                 # ID already exists - do NOT overwrite (safety)
                 if current_id != cleaned_id:
-                    logger.warning(f"Supplier {supplier_code} already has ID {current_id}, ignoring detected {cleaned_id}")
-                return True, False # Already has an ID, consider it a success but not newly added
+                    logger.warning(
+                        f"Supplier {supplier_code} already has ID {current_id}, ignoring detected {cleaned_id}"
+                    )
+                return True, False  # Already has an ID, consider it a success but not newly added
 
             # Update
             doc_ref.update({"global_id": cleaned_id, "updated_at": datetime.now()})
@@ -571,7 +575,7 @@ class SupplierService:
             # Invalidate cache
             self.invalidate_cache()
             self._update_meta_timestamp()
-            
+
             return True, True
         except Exception as e:
             logger.error(f"Error updating global ID for supplier: {e}")

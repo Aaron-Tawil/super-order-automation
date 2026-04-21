@@ -93,7 +93,9 @@ class ExtractedOrder(BaseModel):
     document_total_quantity: float | None = Field(None, description="Total quantity of items from bottom of invoice")
 
     # LLM Verification (Trial 2)
-    is_math_valid: bool | None = Field(None, description="Did the LLM verify that the calculated sum matches the printed total?")
+    is_math_valid: bool | None = Field(
+        None, description="Did the LLM verify that the calculated sum matches the printed total?"
+    )
     math_reasoning: str | None = Field(None, description="Explanation for math discrepancy if any")
     is_qty_valid: bool | None = Field(None, description="Did the LLM verify that the calculated quantities match?")
     qty_reasoning: str | None = Field(None, description="Explanation for quantity discrepancy if any")

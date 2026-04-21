@@ -53,8 +53,7 @@ class ProcessingEventsService:
             if not _requires_index_error(e):
                 raise
             logger.warning(
-                "Firestore index for failed processing events is missing. "
-                "Falling back to unindexed failed-event scan."
+                "Firestore index for failed processing events is missing. Falling back to unindexed failed-event scan."
             )
 
         docs = self._collection.where(filter=FieldFilter("status", "==", "FAILED")).stream()

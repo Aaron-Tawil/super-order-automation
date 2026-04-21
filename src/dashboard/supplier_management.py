@@ -101,7 +101,7 @@ def show_edit_form(supplier_service: SupplierService, supplier_code: str, suppli
             phone = st.text_input(
                 get_text("lbl_phone"), value=supplier.get("phone", ""), key=f"edit_phone_{supplier_code}"
             )
-            
+
             additional_emails = supplier.get("additional_emails", [])
             if additional_emails:
                 st.caption(f"Additional Emails: {', '.join(additional_emails)}")

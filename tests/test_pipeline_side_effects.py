@@ -47,10 +47,6 @@ def test_pipeline_stages_new_items_without_persisting(
 
     assert result.new_items_added == 1
     assert result.added_barcodes == ["7290000000001"]
-    assert result.pending_new_items == [
-        {"barcode": "7290000000001", "name": "Milk", "item_code": "7290000000001"}
-    ]
-    assert result.new_items_data == [
-        {"barcode": "7290000000001", "description": "Milk", "final_net_price": 5.5}
-    ]
+    assert result.pending_new_items == [{"barcode": "7290000000001", "name": "Milk", "item_code": "7290000000001"}]
+    assert result.new_items_data == [{"barcode": "7290000000001", "description": "Milk", "final_net_price": 5.5}]
     mock_items_service.return_value.add_new_items_batch.assert_not_called()

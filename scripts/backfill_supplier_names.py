@@ -31,9 +31,7 @@ def backfill_supplier_names(dry_run: bool = True) -> None:
     # Load supplier name map once
     supplier_service = SupplierService(firestore_client=db)
     all_suppliers = supplier_service.get_all_suppliers()
-    name_map: dict[str, str] = {
-        s["code"]: s["name"] for s in all_suppliers if s.get("code") and s.get("name")
-    }
+    name_map: dict[str, str] = {s["code"]: s["name"] for s in all_suppliers if s.get("code") and s.get("name")}
     logger.info(f"Loaded {len(name_map)} supplier names from suppliers collection.")
 
     docs = list(orders_col.stream())

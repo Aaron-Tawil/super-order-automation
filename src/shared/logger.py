@@ -8,6 +8,7 @@ from src.shared.config import settings
 try:
     import google.cloud.logging
     from google.cloud.logging.handlers import StructuredLogHandler
+
     HAS_GOOGLE_LOGGING = True
 except ImportError:
     HAS_GOOGLE_LOGGING = False

@@ -1,4 +1,3 @@
-
 import os
 import re
 from typing import Dict, List, Optional, Set, Tuple
@@ -30,18 +29,18 @@ class LocalSupplierDetector:
     def __init__(self):
         self.supplier_service = SupplierService()
         self.supplier_service._ensure_cache_loaded()
-        
+
         # Load Blacklists from Config
         self.blacklist_ids = settings.blacklist_ids
         self.blacklist_emails = settings.blacklist_emails
-        
-        logger.info(f"LocalDetector initialized. Blacklist: {len(self.blacklist_ids)} IDs, {len(self.blacklist_emails)} Emails.")
 
-    def detect_supplier(self, 
-                       file_path: str, 
-                       mime_type: str, 
-                       email_metadata: dict[str, str] = None,
-                       debug: bool = False) -> tuple | dict:
+        logger.info(
+            f"LocalDetector initialized. Blacklist: {len(self.blacklist_ids)} IDs, {len(self.blacklist_emails)} Emails."
+        )
+
+    def detect_supplier(
+        self, file_path: str, mime_type: str, email_metadata: dict[str, str] = None, debug: bool = False
+    ) -> tuple | dict:
         """
         Main entry point.
         Normally returns: (supplier_code, confidence, method_used)
@@ -54,36 +53,48 @@ class LocalSupplierDetector:
                 return code, conf, "metadata"
             elif debug:
                 return {
-                    "code": code or "UNKNOWN", 
-                    "conf": conf, 
-                    "method": "metadata" if code else "none", 
-                    "raw_text": f"Subject: {email_metadata.get('subject', '')}\nBody: {email_metadata.get('body', '')}", 
-                    "found_identifiers": found_ids
+                    "code": code or "UNKNOWN",
+                    "conf": conf,
+                    "method": "metadata" if code else "none",
+                    "raw_text": f"Subject: {email_metadata.get('subject', '')}\nBody: {email_metadata.get('body', '')}",
+                    "found_identifiers": found_ids,
                 }
 
         # 2. Check File Content
         if not os.path.exists(file_path):
-            return {"code": "UNKNOWN", "conf": 0.0, "method": "none", "raw_text": "", "found_identifiers": []} if debug else ("UNKNOWN", 0.0, "none")
+            return (
+                {"code": "UNKNOWN", "conf": 0.0, "method": "none", "raw_text": "", "found_identifiers": []}
+                if debug
+                else ("UNKNOWN", 0.0, "none")
+            )
 
         text = ""
         if mime_type == "application/pdf":
             text = self._extract_text_pdf(file_path)
-        elif mime_type in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel", "text/csv"]:
+        elif mime_type in [
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel",
+            "text/csv",
+        ]:
             text = self._extract_text_excel(file_path, mime_type)
-        
+
         if not text:
-            return {"code": "UNKNOWN", "conf": 0.0, "method": "none", "raw_text": "", "found_identifiers": []} if debug else ("UNKNOWN", 0.0, "none")
+            return (
+                {"code": "UNKNOWN", "conf": 0.0, "method": "none", "raw_text": "", "found_identifiers": []}
+                if debug
+                else ("UNKNOWN", 0.0, "none")
+            )
 
         # 3. Match Identifiers in Text
         code, conf, all_identifiers = self._match_identifiers(text, return_all=debug)
-        
+
         if debug:
             return {
                 "code": code or "UNKNOWN",
                 "conf": conf,
                 "method": "content_regex" if code else "none",
                 "raw_text": text,
-                "found_identifiers": all_identifiers
+                "found_identifiers": all_identifiers,
             }
 
         if code:
@@ -96,9 +107,9 @@ class LocalSupplierDetector:
         sender = metadata.get("sender", "").lower()
         subject = metadata.get("subject", "")
         body = metadata.get("body", "")
-        
+
         found_ids = []
-        
+
         # 1. Sender Email Match
         # Extract email from "Name <email@domain.com>" format if needed
         email_match = re.search(REGEX_EMAIL, sender)
@@ -117,7 +128,7 @@ class LocalSupplierDetector:
         text_to_scan = f"{subject} {body}"
         code, conf, more_ids = self._match_identifiers(text_to_scan, return_all=return_all)
         found_ids.extend(more_ids)
-        
+
         if code and not return_all:
             logger.info(f"✅ Local Match by Metadata Text -> {code}")
             return code, conf, found_ids
@@ -129,7 +140,7 @@ class LocalSupplierDetector:
         found_identifiers = []
         best_code = None
         best_conf = 0.0
-        
+
         # Check IDs first (Strongest)
         # Using strict regex from prototype
         for match in re.finditer(REGEX_ISRAELI_ID, text):
@@ -162,12 +173,12 @@ class LocalSupplierDetector:
         """Checks if email is in blacklist OR matches a blacklisted domain (@domain.com)."""
         if email in self.blacklist_emails:
             return True
-        
+
         # Check for domain wildcards
         for blocked in self.blacklist_emails:
             if blocked.startswith("@") and email.endswith(blocked):
                 return True
-        
+
         return False
 
     def _extract_text_pdf(self, file_path: str) -> str:
@@ -190,7 +201,7 @@ class LocalSupplierDetector:
             else:
                 # default to excel for other mime types
                 df = pd.read_excel(file_path, nrows=20, header=None)
-            
+
             if df is not None:
                 # Convert to string blob
                 return df.to_string(index=False, header=False)

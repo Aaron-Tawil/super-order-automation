@@ -4,6 +4,7 @@ from src.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 @functions_framework.http
 def renew_watch(request):
     """

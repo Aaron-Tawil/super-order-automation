@@ -40,7 +40,7 @@ def upload_to_gcs(file_path: str, original_filename: str) -> str:
             _, ext = os.path.splitext(original_filename.lower())
             if not ext or not ext.startswith("."):
                 ext = ".bin"
-            
+
             unique_name = f"{uuid.uuid4()}{ext}"
             blob = bucket.blob(unique_name)
 

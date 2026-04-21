@@ -5,6 +5,7 @@ from src.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 @functions_framework.cloud_event
 def order_bot(cloud_event):
     """
