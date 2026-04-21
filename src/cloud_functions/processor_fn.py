@@ -26,10 +26,11 @@ from src.ingestion.firestore_writer import (
 from src.ingestion.gcs_writer import download_file_from_gcs
 from src.ingestion.gmail_utils import get_gmail_service, normalize_email_subject
 from src.shared.config import settings
+from src.shared.constants import INGESTION_SOURCE_EMAIL
 from src.shared.idempotency_service import IdempotencyService
 from src.shared.logger import get_logger
 from src.shared.translations import get_text
-from src.shared.utils import is_test_sender
+from src.shared.utils import extract_sender_email, is_test_sender
 
 logger = get_logger(__name__)
 
@@ -200,6 +201,7 @@ def process_order_event(cloud_event: Any):
         event_id = event.event_id or event_id
         message_id = event.email_metadata.message_id
         email_subject = normalize_email_subject(event.email_metadata.subject)
+        sender_email = extract_sender_email(event.email_metadata.sender)
         ctx = _ctx(event_id, message_id)
         _track_event_status(
             event_id,
@@ -303,6 +305,8 @@ def process_order_event(cloud_event: Any):
                 is_test=is_test_sender(event.email_metadata.sender),
                 feedback_email_status=EMAIL_STATUS_PENDING,
                 feedback_email_attempts=0,
+                ingestion_source=INGESTION_SOURCE_EMAIL,
+                sender_email=sender_email,
             )
             feedback_email_status, feedback_email_attempts, outbox_id = _queue_and_attempt_response_email(
                 event_id=event_id,
@@ -372,8 +376,10 @@ def process_order_event(cloud_event: Any):
                 event.gcs_uri,
                 is_test=is_test_order,
                 metadata={
+                    "ingestion_source": INGESTION_SOURCE_EMAIL,
                     "subject": email_subject,
                     "sender": event.email_metadata.sender,
+                    "sender_email": sender_email,
                     "filename": event.filename,
                     "phase1_reasoning": result.phase1_reasoning,
                 },

@@ -4,8 +4,10 @@ from typing import Any
 from google.cloud import firestore
 
 from src.shared.config import settings
+from src.shared.constants import INGESTION_SOURCE_DASHBOARD_UPLOAD, INGESTION_SOURCE_EMAIL
 from src.shared.logger import get_logger
 from src.shared.models import ExtractedOrder
+from src.shared.utils import extract_sender_email
 
 logger = get_logger(__name__)
 
@@ -13,6 +15,16 @@ logger = get_logger(__name__)
 def _utc_now() -> datetime:
     """Return a timezone-aware UTC timestamp."""
     return datetime.now(UTC)
+
+
+def _normalize_ingestion_source(metadata: dict[str, Any]) -> str | None:
+    """Map caller metadata into a stable persisted ingestion source value."""
+    raw_source = str(metadata.get("ingestion_source") or "").strip().lower()
+    if raw_source in {INGESTION_SOURCE_EMAIL, INGESTION_SOURCE_DASHBOARD_UPLOAD}:
+        return raw_source
+    if metadata.get("from_manual_upload"):
+        return INGESTION_SOURCE_DASHBOARD_UPLOAD
+    return None
 
 
 def save_order_to_firestore(
@@ -53,9 +65,22 @@ def save_order_to_firestore(
             order_dict["ui_metadata"] = {}
 
         metadata = metadata or {}
+        ingestion_source = _normalize_ingestion_source(metadata)
+        sender_email = str(metadata.get("sender_email") or "").strip().lower()
+        if not sender_email and ingestion_source == INGESTION_SOURCE_EMAIL:
+            sender_email = extract_sender_email(metadata.get("sender"))
+
+        if ingestion_source:
+            order_dict["ingestion_source"] = ingestion_source
+            order_dict["ui_metadata"]["ingestion_source"] = ingestion_source
+
         for field in ("sender", "subject", "filename"):
             if metadata.get(field):
                 order_dict["ui_metadata"][field] = metadata[field]
+
+        if sender_email:
+            order_dict["sender_email"] = sender_email
+            order_dict["ui_metadata"]["sender_email"] = sender_email
 
         if added_items_barcodes:
             order_dict["ui_metadata"]["added_items_barcodes"] = [
@@ -90,6 +115,8 @@ def save_failed_order_to_firestore(
     is_test: bool = False,
     feedback_email_status: str | None = None,
     feedback_email_attempts: int | None = None,
+    ingestion_source: str = INGESTION_SOURCE_EMAIL,
+    sender_email: str | None = None,
 ) -> str | None:
     """
     Persist a failed extraction placeholder in the orders collection.
@@ -120,7 +147,9 @@ def save_failed_order_to_firestore(
             "warnings_count": 1 if error else 0,
             "has_warnings": bool(error),
             "is_unknown_supplier": str(resolved_supplier_code).upper() == "UNKNOWN",
+            "ingestion_source": ingestion_source,
             "sender": sender,
+            "sender_email": sender_email or extract_sender_email(sender),
             "subject": subject,
             "filename": filename,
             "error": error,
@@ -128,8 +157,10 @@ def save_failed_order_to_firestore(
             "feedback_email_attempts": int(feedback_email_attempts or 0),
             "ui_metadata": {
                 "sender": sender,
+                "sender_email": sender_email or extract_sender_email(sender),
                 "subject": subject,
                 "filename": filename,
+                "ingestion_source": ingestion_source,
                 "source_file_uri": source_file_uri,
                 "message_id": message_id,
                 "thread_id": thread_id,

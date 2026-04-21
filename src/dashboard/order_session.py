@@ -31,10 +31,7 @@ def _collect_revertable_barcodes(metadata: dict, new_items_data: list[dict]) -> 
     seen: set[str] = set()
     revertable: list[str] = []
 
-    raw_barcodes = metadata.get("added_items_barcodes") or [
-        item.get("barcode")
-        for item in new_items_data
-    ]
+    raw_barcodes = metadata.get("added_items_barcodes") or [item.get("barcode") for item in new_items_data]
 
     for raw_barcode in raw_barcodes:
         barcode = str(raw_barcode or "").strip()
@@ -46,9 +43,29 @@ def _collect_revertable_barcodes(metadata: dict, new_items_data: list[dict]) -> 
     return revertable
 
 
+def _get_order_origin_details(data: dict, metadata: dict) -> dict[str, str]:
+    """Return display-friendly ingestion source details for the order session header."""
+    ingestion_source = str(data.get("ingestion_source") or metadata.get("ingestion_source") or "").strip().lower()
+    sender_email = str(data.get("sender_email") or metadata.get("sender_email") or "").strip().lower()
+
+    if ingestion_source == "email":
+        source_label = get_text("order_session_source_email")
+    elif ingestion_source == "dashboard_upload":
+        source_label = get_text("order_session_source_dashboard_upload")
+    else:
+        source_label = get_text("order_session_source_unknown")
+
+    return {
+        "ingestion_source": ingestion_source,
+        "source_label": source_label,
+        "sender_email": sender_email,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main render function
 # ---------------------------------------------------------------------------
+
 
 def render_order_session() -> None:  # noqa: C901
     """Render the full-page order session view."""
@@ -75,7 +92,11 @@ def render_order_session() -> None:  # noqa: C901
     supplier_code = data.get("supplier_code") or "Unknown"
 
     # If supplier_name is missing (e.g. legacy order), look it up live
-    if (not supplier_name or supplier_name in ("Unknown", "UNKNOWN")) and supplier_code not in ("Unknown", "UNKNOWN", None):
+    if (not supplier_name or supplier_name in ("Unknown", "UNKNOWN")) and supplier_code not in (
+        "Unknown",
+        "UNKNOWN",
+        None,
+    ):
         try:
             s_data = SupplierService().get_supplier(supplier_code)
             if s_data:
@@ -125,6 +146,7 @@ def render_order_session() -> None:  # noqa: C901
     invoice_number = str(data.get("invoice_number", "-") or "-").strip() or "-"
     created_at = data.get("created_at") or metadata.get("created_at")
     created_at_str = format_dashboard_dt(created_at)
+    origin_details = _get_order_origin_details(data, metadata)
 
     # ------------------------------------------------------------------
     # Order header card — RTL-friendly: status (right) → invoice → sender → supplier (left)
@@ -157,6 +179,11 @@ def render_order_session() -> None:  # noqa: C901
             _custom_caption(f"💰 {cost_ils:.3f} ₪")
 
         st.divider()
+        origin_parts = [f"**{get_text('order_session_source')}**: {origin_details['source_label']}"]
+        if origin_details["ingestion_source"] == "email" and origin_details["sender_email"]:
+            origin_parts.append(f"**{get_text('order_session_sender_email')}**: {origin_details['sender_email']}")
+        st.markdown(" | ".join(origin_parts))
+
         # Order type toggle inside the card — cleaner than floating it outside
         type_col, _ = st.columns([2, 2])
         with type_col:
@@ -209,11 +236,7 @@ def render_order_session() -> None:  # noqa: C901
     items_service = ItemsService()
     display_data = []
 
-    all_barcodes = [
-        str(item.get("barcode", "")).strip()
-        for item in data.get("line_items", [])
-        if item.get("barcode")
-    ]
+    all_barcodes = [str(item.get("barcode", "")).strip() for item in data.get("line_items", []) if item.get("barcode")]
     items_map: dict[str, str] = {}
 
     if all_barcodes:
@@ -247,12 +270,14 @@ def render_order_session() -> None:  # noqa: C901
     df_display = df[display_cols].copy() if not df.empty else pd.DataFrame(columns=display_cols)
 
     # Rename columns to Hebrew for display
-    df_display_heb = df_display.rename(columns={
-        "item_code": get_text("col_item_code"),
-        "description": get_text("col_description"),
-        "quantity": get_text("col_qty"),
-        "final_net_price": get_text("col_net_price"),
-    })
+    df_display_heb = df_display.rename(
+        columns={
+            "item_code": get_text("col_item_code"),
+            "description": get_text("col_description"),
+            "quantity": get_text("col_qty"),
+            "final_net_price": get_text("col_net_price"),
+        }
+    )
     st.dataframe(df_display_heb, width="stretch", hide_index=True)
 
     # ------------------------------------------------------------------
@@ -300,6 +325,7 @@ def render_order_session() -> None:  # noqa: C901
         # Build a safe, informative download filename: order_SUPPLIER_INVOICE_DATE.ext
         def _safe(s: str) -> str:
             import re  # noqa: PLC0415
+
             return re.sub(r"[^\w\-]", "_", str(s or "unknown")).strip("_") or "unknown"
 
         # Determine extension from stored filename or from GCS URI blob name
@@ -311,9 +337,7 @@ def render_order_session() -> None:  # noqa: C901
 
         date_str = created_at_str[:10].replace("-", "") if created_at_str != "-" else ""
         safe_download_name = (
-            f"order_{_safe(supplier_code)}_{_safe(invoice_number)}"
-            + (f"_{date_str}" if date_str else "")
-            + src_ext
+            f"order_{_safe(supplier_code)}_{_safe(invoice_number)}" + (f"_{date_str}" if date_str else "") + src_ext
         )
 
         if source_uri:
@@ -333,8 +357,13 @@ def render_order_session() -> None:  # noqa: C901
                     except Exception as e:
                         st.error(f"שגיאה: {e}")
         else:
-            st.button(get_text("order_session_download_source"), disabled=True, width="stretch", type="secondary",
-                      help="הקובץ המקורי אינו זמין")
+            st.button(
+                get_text("order_session_download_source"),
+                disabled=True,
+                width="stretch",
+                type="secondary",
+                help="הקובץ המקורי אינו זמין",
+            )
 
     # Serve the downloaded file as a real download_button on the next render
     if "_src_file_bytes" in st.session_state:
@@ -415,10 +444,7 @@ def render_order_session() -> None:  # noqa: C901
 
                         # Persist to permanent orders collection
                         if order_id:
-                            OrdersService().update_order_data(
-                                order_id,
-                                {"new_items": [], "ui_metadata": metadata}
-                            )
+                            OrdersService().update_order_data(order_id, {"new_items": [], "ui_metadata": metadata})
                         st.rerun()
                     except Exception as e:
                         st.error(get_text("msg_revert_fail", error=e))
@@ -458,12 +484,10 @@ def render_order_session() -> None:  # noqa: C901
 
         draft_instructions = st.text_area(
             "הוראות מיוחדות ל-AI:",
-            placeholder=(
-                "לדוגמה: 'התעלם מסעיפי ביטוח' או 'המחיר ביחידות הוא ברוטו כולל מע\"מ'"
-            ),
+            placeholder=("לדוגמה: 'התעלם מסעיפי ביטוח' או 'המחיר ביחידות הוא ברוטו כולל מע\"מ'"),
             height=140,
             key=playground_instr_key,
-            help="הוראות אלו יישלחו ל-AI כהקשר נוסף בשלב החילוץ. ניתן לנסות הגדרות שונות ולהשוות."
+            help="הוראות אלו יישלחו ל-AI כהקשר נוסף בשלב החילוץ. ניתן לנסות הגדרות שונות ולהשוות.",
         )
 
         # Action buttons row
@@ -479,7 +503,7 @@ def render_order_session() -> None:  # noqa: C901
                 type="primary",
                 width="stretch",
                 disabled=not source_uri,
-                help=None if source_uri else "קובץ מקור לא נמצא — לא ניתן להפעיל מחדש."
+                help=None if source_uri else "קובץ מקור לא נמצא — לא ניתן להפעיל מחדש.",
             )
 
         with btn_col2:
@@ -499,10 +523,10 @@ def render_order_session() -> None:  # noqa: C901
                 disabled=(not can_save or not has_instruction_text),
                 help=(
                     "שמור את הטקסט הנוכחי כהוראות הקבועות של הספק."
-                    if can_save and has_instruction_text else
-                    "כתוב הוראות כדי לשמור אותן כהוראות קבועות."
-                    if can_save else
-                    "לא ניתן לשמור — ספק לא מזוהה."
+                    if can_save and has_instruction_text
+                    else "כתוב הוראות כדי לשמור אותן כהוראות קבועות."
+                    if can_save
+                    else "לא ניתן לשמור — ספק לא מזוהה."
                 ),
             )
 
@@ -511,7 +535,9 @@ def render_order_session() -> None:  # noqa: C901
             with st.spinner("מריץ AI מחדש עם ההוראות... זה עשוי לקחת כ-30 שניות"):
                 temp_path: str | None = None
                 try:
-                    filename_retry = metadata.get("filename") or data.get("ui_metadata", {}).get("filename", "unknown.pdf")
+                    filename_retry = metadata.get("filename") or data.get("ui_metadata", {}).get(
+                        "filename", "unknown.pdf"
+                    )
                     temp_suffix = os.path.splitext(filename_retry)[1] if "." in filename_retry else ""
                     with tempfile.NamedTemporaryFile(
                         prefix="playground_",
@@ -545,6 +571,7 @@ def render_order_session() -> None:  # noqa: C901
                 except Exception as e:
                     st.error(get_text("error_general", error=e))
                     import traceback  # noqa: PLC0415
+
                     st.code(traceback.format_exc())
                 finally:
                     if temp_path and os.path.exists(temp_path):
@@ -557,17 +584,33 @@ def render_order_session() -> None:  # noqa: C901
             # MERGE: start from the current live order to preserve Firestore-only
             # fields like created_at, gcs_uri, status, etc.
             merged = dict(data)  # copy of current live order
-            
+
             # Fields to bring in from the new extraction result
             EXTRACTED_FIELDS = (
-                "line_items", "invoice_number", "currency", "vat_status",
-                "global_discount_percentage", "total_invoice_discount_amount",
-                "document_total_with_vat", "document_total_without_vat", "document_total_quantity",
-                "is_math_valid", "math_reasoning", "is_qty_valid", "qty_reasoning",
-                "notes", "warnings", "processing_cost", "processing_cost_ils",
-                "usage_metadata", "ai_metadata",
-                "supplier_name", "supplier_code", "supplier_global_id",
-                "supplier_email", "supplier_phone",
+                "line_items",
+                "invoice_number",
+                "currency",
+                "vat_status",
+                "global_discount_percentage",
+                "total_invoice_discount_amount",
+                "document_total_with_vat",
+                "document_total_without_vat",
+                "document_total_quantity",
+                "is_math_valid",
+                "math_reasoning",
+                "is_qty_valid",
+                "qty_reasoning",
+                "notes",
+                "warnings",
+                "processing_cost",
+                "processing_cost_ils",
+                "usage_metadata",
+                "ai_metadata",
+                "supplier_name",
+                "supplier_code",
+                "supplier_global_id",
+                "supplier_email",
+                "supplier_phone",
             )
             for field in EXTRACTED_FIELDS:
                 if field in playground_data:
@@ -577,7 +620,12 @@ def render_order_session() -> None:  # noqa: C901
             # never written back when the code is known.
             resolved_code = merged.get("supplier_code") or supplier_code
             resolved_name = merged.get("supplier_name") or ""
-            if (not resolved_name or resolved_name.upper() in ("UNKNOWN", "")) and resolved_code not in ("Unknown", "UNKNOWN", None, ""):
+            if (not resolved_name or resolved_name.upper() in ("UNKNOWN", "")) and resolved_code not in (
+                "Unknown",
+                "UNKNOWN",
+                None,
+                "",
+            ):
                 try:
                     s_data = SupplierService().get_supplier(resolved_code)
                     if s_data and s_data.get("name"):
@@ -631,16 +679,16 @@ def render_order_session() -> None:  # noqa: C901
                 )
             with m3:
                 math_orig = "✅" if data.get("is_math_valid") else ("❌" if data.get("is_math_valid") is False else "—")
-                math_new  = "✅" if pg.get("is_math_valid") else ("❌" if pg.get("is_math_valid") is False else "—")
+                math_new = "✅" if pg.get("is_math_valid") else ("❌" if pg.get("is_math_valid") is False else "—")
                 st.metric("וולידציה מתמטית", f"{math_orig} → {math_new}")
             with m4:
                 qty_orig = "✅" if data.get("is_qty_valid") else ("❌" if data.get("is_qty_valid") is False else "—")
-                qty_new  = "✅" if pg.get("is_qty_valid") else ("❌" if pg.get("is_qty_valid") is False else "—")
+                qty_new = "✅" if pg.get("is_qty_valid") else ("❌" if pg.get("is_qty_valid") is False else "—")
                 st.metric("וולידציית כמויות", f"{qty_orig} → {qty_new}")
 
             # Warnings
             orig_warns = data.get("warnings") or []
-            new_warns  = pg.get("warnings") or []
+            new_warns = pg.get("warnings") or []
             if orig_warns or new_warns:
                 w_col1, w_col2 = st.columns(2)
                 with w_col1:
@@ -655,17 +703,19 @@ def render_order_session() -> None:  # noqa: C901
                         st.success("🟢 אין אזהרות חדשות!")
 
             orig_items = data.get("line_items", [])
-            new_items  = pg.get("line_items", [])
+            new_items = pg.get("line_items", [])
 
             def _items_to_df(items: list) -> pd.DataFrame:
                 rows = []
                 for it in items:
-                    rows.append({
-                        "ברקוד": it.get("barcode") or "-",
-                        "תיאור": (it.get("description") or "")[:35],
-                        "כמות": it.get("quantity", ""),
-                        "מחיר נטו": it.get("final_net_price", ""),
-                    })
+                    rows.append(
+                        {
+                            "ברקוד": it.get("barcode") or "-",
+                            "תיאור": (it.get("description") or "")[:35],
+                            "כמות": it.get("quantity", ""),
+                            "מחיר נטו": it.get("final_net_price", ""),
+                        }
+                    )
                 return pd.DataFrame(rows)
 
             cmp_orig, cmp_new = st.columns(2)

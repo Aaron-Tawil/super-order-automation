@@ -21,6 +21,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.dashboard import auth, failed_event, inbox, items_management, order_session, supplier_management  # noqa: E402
 from src.shared.config import settings  # noqa: E402
+from src.shared.constants import INGESTION_SOURCE_DASHBOARD_UPLOAD  # noqa: E402
 from src.shared.logger import get_logger  # noqa: E402
 from src.shared.translations import get_text  # noqa: E402
 
@@ -134,6 +135,11 @@ if order_id and "extracted_data" not in st.session_state:
             "filename": order_doc.get("ui_metadata", {}).get("filename", order_doc.get("filename")),
             "subject": order_doc.get("ui_metadata", {}).get("subject", order_doc.get("subject")),
             "sender": order_doc.get("ui_metadata", {}).get("sender", order_doc.get("sender")),
+            "sender_email": order_doc.get("ui_metadata", {}).get("sender_email", order_doc.get("sender_email")),
+            "ingestion_source": order_doc.get("ui_metadata", {}).get(
+                "ingestion_source",
+                order_doc.get("ingestion_source"),
+            ),
             "source_file_uri": order_doc.get("gcs_uri"),
             "is_test": bool(order_doc.get("is_test", False)),
             "from_orders_inbox": True,
@@ -251,6 +257,7 @@ if current_page == "upload":
 
                         # Save the manually extracted order to Firestore directly
                         order_metadata = {
+                            "ingestion_source": INGESTION_SOURCE_DASHBOARD_UPLOAD,
                             "filename": uploaded_file.name,
                             "phase1_reasoning": result.phase1_reasoning,
                             "from_manual_upload": True,
@@ -273,6 +280,7 @@ if current_page == "upload":
                         saved_order = OrdersService().get_order(doc_id)
                         st.session_state["extracted_data"] = saved_order
                         st.session_state["session_metadata"] = {
+                            "ingestion_source": INGESTION_SOURCE_DASHBOARD_UPLOAD,
                             "filename": uploaded_file.name,
                             "source_file_uri": source_uri,
                             "is_test": bool(selected_order_type),

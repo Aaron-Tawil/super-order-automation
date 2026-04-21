@@ -12,6 +12,7 @@ from src.data.orders_service import OrdersService
 from src.data.processing_events_service import ProcessingEventsService
 from src.data.supplier_service import SupplierService
 from src.shared.config import settings
+from src.shared.constants import INGESTION_SOURCE_DASHBOARD_UPLOAD, INGESTION_SOURCE_EMAIL
 from src.shared.translations import get_text
 
 MIN_DT = datetime.min.replace(tzinfo=UTC)
@@ -39,6 +40,21 @@ def _build_order_link(order: dict) -> str:
     if order.get("record_type") in {"processing_event", "failed_order"}:
         return f"{base}/?failed_event_id={order.get('event_id', '')}"
     return f"{base}/?order_id={order.get('order_id', '')}"
+
+
+def _format_ingestion_source(order: dict) -> str:
+    """Return a display-friendly ingestion source label for inbox rows."""
+    source = (
+        str(order.get("ingestion_source") or (order.get("ui_metadata") or {}).get("ingestion_source") or "")
+        .strip()
+        .lower()
+    )
+
+    if source == INGESTION_SOURCE_EMAIL:
+        return get_text("inbox_ingestion_source_email")
+    if source == INGESTION_SOURCE_DASHBOARD_UPLOAD:
+        return get_text("inbox_ingestion_source_dashboard_upload")
+    return get_text("inbox_ingestion_source_unknown")
 
 
 @st.cache_data(ttl=30)
@@ -73,6 +89,7 @@ def _matches_search(order: dict, search: str) -> bool:
         str(order.get("invoice_number", "")),
         str(order.get("supplier_code", "")),
         str(order.get("supplier_name", "")),
+        str(order.get("ingestion_source", "")),
         str(order.get("sender", "")),
         str(order.get("subject", "")),
         str(order.get("filename", "")),
@@ -154,7 +171,7 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
     filtered: list[dict] = []
     date_from = None
     date_to = None
-    if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
+    if isinstance(date_range, tuple | list) and len(date_range) == 2:
         date_from, date_to = date_range[0], date_range[1]
 
     for order in orders:
@@ -213,6 +230,7 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
                 "status": order.get("display_status", "UNKNOWN"),
                 "supplier": f"{supplier_name} ({supplier_code})",
                 "invoice_number": order.get("invoice_number", "-"),
+                "ingestion_source": _format_ingestion_source(order),
                 "cost_ils": _format_cost_ils(order),
                 "error": order.get("error", "-")
                 if order.get("record_type") in {"processing_event", "failed_order"}
@@ -238,6 +256,7 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
         "status",
         "supplier",
         "invoice_number",
+        "ingestion_source",
         "cost_ils",
         "error",
         "line_items",
@@ -268,6 +287,7 @@ def render_orders_inbox(*, show_title: bool = True, embedded: bool = False) -> N
             "status": st.column_config.TextColumn(get_text("inbox_col_status")),
             "supplier": st.column_config.TextColumn(get_text("inbox_col_supplier")),
             "invoice_number": st.column_config.TextColumn(get_text("inbox_col_invoice")),
+            "ingestion_source": st.column_config.TextColumn(get_text("inbox_col_ingestion_source")),
             "cost_ils": st.column_config.NumberColumn(get_text("inbox_col_cost"), format="%.3f ₪"),
             "error": st.column_config.TextColumn(get_text("inbox_col_error")),
             "line_items": st.column_config.NumberColumn(get_text("inbox_col_line_items")),

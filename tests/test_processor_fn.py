@@ -213,7 +213,9 @@ def test_process_order_event_success(
     save_args = mock_save_firestore.call_args
     assert save_args.args == (mock_order, "gs://bucket/invoice.pdf")
     assert save_args.kwargs["is_test"] is False
+    assert save_args.kwargs["metadata"]["ingestion_source"] == "email"
     assert save_args.kwargs["metadata"]["sender"] == "sender@example.com"
+    assert save_args.kwargs["metadata"]["sender_email"] == "sender@example.com"
     assert save_args.kwargs["metadata"]["subject"] == "Invoice 123"
     assert save_args.kwargs["metadata"]["filename"] == "invoice.pdf"
     assert mock_order.is_test is False
@@ -285,7 +287,9 @@ def test_process_order_event_success_xlsx(
     save_args = mock_save_firestore.call_args
     assert save_args.args == (mock_order, "gs://bucket/invoice.xlsx")
     assert save_args.kwargs["is_test"] is False
+    assert save_args.kwargs["metadata"]["ingestion_source"] == "email"
     assert save_args.kwargs["metadata"]["sender"] == "sender@example.com"
+    assert save_args.kwargs["metadata"]["sender_email"] == "sender@example.com"
     assert save_args.kwargs["metadata"]["subject"] == "Invoice 123"
     assert save_args.kwargs["metadata"]["filename"] == "invoice.xlsx"
     assert mock_order.is_test is False
@@ -351,7 +355,9 @@ def test_process_order_event_marks_test_sender_orders(
     save_args = mock_save_firestore.call_args
     assert save_args.args == (mock_order, "gs://bucket/invoice.pdf")
     assert save_args.kwargs["is_test"] is True
+    assert save_args.kwargs["metadata"]["ingestion_source"] == "email"
     assert save_args.kwargs["metadata"]["sender"] == "Test User <test@example.com>"
+    assert save_args.kwargs["metadata"]["sender_email"] == "test@example.com"
     assert mock_order.is_test is True
     mock_email_outbox["service"].enqueue_email.assert_called()
 
@@ -429,6 +435,8 @@ def test_process_order_event_no_orders(
     assert failed_kwargs["message_id"] == "msg1"
     assert failed_kwargs["thread_id"] == "t1"
     assert failed_kwargs["error"] == "No orders extracted"
+    assert failed_kwargs["ingestion_source"] == "email"
+    assert failed_kwargs["sender_email"] == ""
     assert failed_kwargs["feedback_email_status"] == "PENDING_RETRY"
     mock_email_outbox["service"].mark_sent.assert_called_once_with("outbox-1", attempts=1)
     final_status_call = mock_processing_status.call_args
