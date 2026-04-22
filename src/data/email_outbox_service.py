@@ -11,6 +11,7 @@ from typing import Any
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
+from src.ingestion.gmail_utils import normalize_email_subject
 from src.shared.config import settings
 from src.shared.logger import get_logger
 
@@ -97,7 +98,7 @@ class EmailOutboxService:
             "thread_id": thread_id,
             "message_id": message_id,
             "to": to,
-            "subject": subject,
+            "subject": normalize_email_subject(subject),
             "body": body,
             "is_html": bool(is_html),
             "attachment_refs": attachment_refs or [],
@@ -173,6 +174,7 @@ class EmailOutboxService:
             "attempt_count": final_attempts,
             "sent_at": now,
             "updated_at": now,
+            "next_attempt_at": None,
             "last_error": None,
         }
         try:
@@ -199,6 +201,8 @@ class EmailOutboxService:
         }
         if status == EMAIL_STATUS_PENDING:
             payload["next_attempt_at"] = _next_attempt_at(attempts)
+        else:
+            payload["next_attempt_at"] = None
 
         try:
             self._collection.document(outbox_id).set(payload, merge=True)
@@ -274,6 +278,8 @@ class EmailOutboxService:
         }
         if last_error:
             state["response_email_last_error"] = last_error[:2000]
+        elif status == EMAIL_STATUS_SENT:
+            state["response_email_last_error"] = None
         if status == EMAIL_STATUS_SENT:
             state["response_email_sent_at"] = now
 
@@ -285,6 +291,10 @@ class EmailOutboxService:
                 "feedback_email_status": status,
                 "feedback_email_attempts": int(attempts),
             }
+            if last_error:
+                details["feedback_email_last_error"] = last_error[:2000]
+            elif status == EMAIL_STATUS_SENT:
+                details["feedback_email_last_error"] = None
             try:
                 self._processing_events.document(str(event_id)).set(
                     {"details": details, "updated_at": now},
@@ -302,6 +312,17 @@ class EmailOutboxService:
 
         for order_id in set(order_ids):
             try:
-                self._orders.document(order_id).set(state, merge=True)
+                payload = dict(state)
+                if failed_order_id and str(order_id) == str(failed_order_id):
+                    ui_metadata = {
+                        "feedback_email_status": status,
+                        "feedback_email_attempts": int(attempts),
+                    }
+                    if last_error:
+                        ui_metadata["feedback_email_last_error"] = last_error[:2000]
+                    elif status == EMAIL_STATUS_SENT:
+                        ui_metadata["feedback_email_last_error"] = None
+                    payload["ui_metadata"] = ui_metadata
+                self._orders.document(order_id).set(payload, merge=True)
             except Exception as e:
                 logger.error(f"Failed updating order email state {order_id}: {e}")
